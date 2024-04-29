@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <Kernel/Library/UserOrKernelBuffer.h>
 #include <Kernel/Memory/MemoryManager.h>
 #include <Kernel/Memory/RingBuffer.h>
-#include <Kernel/UserOrKernelBuffer.h>
 
 namespace Kernel::Memory {
 
@@ -23,7 +23,7 @@ RingBuffer::RingBuffer(NonnullOwnPtr<Memory::Region> region, size_t capacity)
 {
 }
 
-bool RingBuffer::copy_data_in(const UserOrKernelBuffer& buffer, size_t offset, size_t length, PhysicalAddress& start_of_copied_data, size_t& bytes_copied)
+bool RingBuffer::copy_data_in(UserOrKernelBuffer const& buffer, size_t offset, size_t length, PhysicalAddress& start_of_copied_data, size_t& bytes_copied)
 {
     size_t start_of_free_area = (m_start_of_used + m_num_used_bytes) % m_capacity_in_bytes;
     bytes_copied = min(m_capacity_in_bytes - m_num_used_bytes, min(m_capacity_in_bytes - start_of_free_area, length));

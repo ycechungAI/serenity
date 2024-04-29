@@ -8,6 +8,8 @@
 
 #include <AK/HashMap.h>
 #include <LibIPC/ConnectionToServer.h>
+#include <LibProtocol/WebSocket.h>
+#include <LibWebSocket/WebSocket.h>
 #include <RequestServer/RequestClientEndpoint.h>
 #include <RequestServer/RequestServerEndpoint.h>
 
@@ -18,26 +20,36 @@ class Request;
 class RequestClient final
     : public IPC::ConnectionToServer<RequestClientEndpoint, RequestServerEndpoint>
     , public RequestClientEndpoint {
-    IPC_CLIENT_CONNECTION(RequestClient, "/tmp/portal/request")
+    IPC_CLIENT_CONNECTION(RequestClient, "/tmp/session/%sid/portal/request"sv)
 
 public:
-    template<typename RequestHashMapTraits = Traits<String>>
-    RefPtr<Request> start_request(String const& method, URL const&, HashMap<String, String, RequestHashMapTraits> const& request_headers = {}, ReadonlyBytes request_body = {});
+    explicit RequestClient(NonnullOwnPtr<Core::LocalSocket>);
 
-    void ensure_connection(URL const&, ::RequestServer::CacheLevel);
+    template<typename RequestHashMapTraits = Traits<ByteString>>
+    RefPtr<Request> start_request(ByteString const& method, URL::URL const&, HashMap<ByteString, ByteString, RequestHashMapTraits> const& request_headers = {}, ReadonlyBytes request_body = {}, Core::ProxyData const& = {});
+
+    RefPtr<WebSocket> websocket_connect(const URL::URL&, ByteString const& origin = {}, Vector<ByteString> const& protocols = {}, Vector<ByteString> const& extensions = {}, HashMap<ByteString, ByteString> const& request_headers = {});
+
+    void ensure_connection(URL::URL const&, ::RequestServer::CacheLevel);
 
     bool stop_request(Badge<Request>, Request&);
-    bool set_certificate(Badge<Request>, Request&, String, String);
+    bool set_certificate(Badge<Request>, Request&, ByteString, ByteString);
 
 private:
-    RequestClient(NonnullOwnPtr<Core::Stream::LocalSocket>);
-
-    virtual void request_progress(i32, Optional<u32> const&, u32) override;
-    virtual void request_finished(i32, bool, u32) override;
+    virtual void request_started(i32, IPC::File const&) override;
+    virtual void request_progress(i32, Optional<u64> const&, u64) override;
+    virtual void request_finished(i32, bool, u64) override;
     virtual void certificate_requested(i32) override;
-    virtual void headers_became_available(i32, IPC::Dictionary const&, Optional<u32> const&) override;
+    virtual void headers_became_available(i32, HashMap<ByteString, ByteString, CaseInsensitiveStringTraits> const&, Optional<u32> const&) override;
+
+    virtual void websocket_connected(i32) override;
+    virtual void websocket_received(i32, bool, ByteBuffer const&) override;
+    virtual void websocket_errored(i32, i32) override;
+    virtual void websocket_closed(i32, u16, ByteString const&, bool) override;
+    virtual void websocket_certificate_requested(i32) override;
 
     HashMap<i32, RefPtr<Request>> m_requests;
+    HashMap<i32, NonnullRefPtr<WebSocket>> m_websockets;
 };
 
 }

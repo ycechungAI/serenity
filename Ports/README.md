@@ -11,6 +11,17 @@ environment.
 
 A list of all available ports can be found [here](AvailablePorts.md).
 
+## External ports
+
+Third party ports might need additional dependencies from another location.
+In this case, you can point the `SERENITY_PORT_DIRS` variable to a local ports directory.
+
+For example:
+
+```bash
+export SERENITY_PORT_DIRS="/path/to/port/dir/:/other/path/"
+```
+
 ## Using ports scripts
 
 Each port has a script called `package.sh` which defines a name and version,
@@ -26,7 +37,7 @@ configuration/compilation options, and some other things (see
   script in this directory. This is sometimes required when LibC changes, for
   example. Pass `clean` as first argument to remove old build files beforehand.
 
-Installed ports are being tracked in `Build/i686/Root/usr/Ports/packages.db` (a simple text file).
+Installed ports are being tracked in `Build/x86_64/Root/usr/Ports/installed.db` (a simple text file).
 You can delete this file at any time, in fact it must be edited or removed
 when clearing the build directory as port dependencies may not be installed
 again otherwise.
@@ -119,12 +130,16 @@ script simply defines some well-known variables and looks like this:
 
 ```bash
 #!/usr/bin/env -S bash ../.port_include.sh
-
-port="foo"
-version="1.2.3"
-useconfigure="true"
-files="https://example.com/foo-${version}.tar.gz foo-${version}.tar.gz"
-depends=("bar" "baz")
+port='foo'
+version='1.2.3'
+useconfigure='true'
+files=(
+    "https://example.com/foo-${version}.tar.gz#9acd50f9a2af37e471f761c3fe7b8dea5617e51dac802fe6c177b74abf0abb5a"
+)
+depends=(
+    'bar'
+    'baz'
+)
 ```
 
 The script in the shebang, [`.port_include.sh`](./.port_include.sh), is where
@@ -134,42 +149,12 @@ all the magic happens.
 
 The following variables have special functionality:
 
-#### `auth_import_key`
-
-PGP key to import (from `keyserver.ubuntu.com`) when [`auth_type`](#auth_type)
-is `sig`.
-
-#### `auth_opts`
-
-Options passed to `gpg --verify` when [`auth_type`](#auth_type) is `sig`.
-
-Usually used like this:
-
-```bash
-auth_opts="foo-${version}.tar.xz.asc foo-${version}.tar.xz"
-```
-
-#### `auth_type`
-
-The type of file validation to use, can be one of:
-
-- `sha256`: Use SHA256 hashes defined in [`files`](#files)
-- `sig`: Use PGP signatures (see [`auth_opts`](#auth_opts))
-
-Most ports use `sig` as `.asc` files are widely available.
-
-This _has_ to be specified in order for `lint-ports` to pass.
-
-If no signature or hash is provided by the author of the files, just create the
-hash yourself by calling `sha256sum` on the downloaded file and specifying the
-hash along with the [`files`](#files).
-
 #### `configopts`
 
 Options passed to the port's [`configscript`](#configscript) in the default
 `configure` function.
 
-`--host=i686-pc-serenity` is always passed, override the `configure` function
+`--host=x86_64-pc-serenity` is always passed, override the `configure` function
 if that's undesirable.
 
 #### `use_fresh_config_sub`
@@ -177,10 +162,10 @@ if that's undesirable.
 Boolean option (`false` by default), will replace the `config.sub` pointed to by
 `config_sub_path` as part of the patching process if set to true.
 
-#### `config_sub_path`
+#### `config_sub_paths`
 
-Path to the `config.sub` file used by autoconf, starting at `$workdir`.
-This is set to `config.sub` by default.
+Paths to the `config.sub` files used by autoconf, starting at `$workdir`.
+This is set to `(config.sub)` by default.
 
 #### `configscript`
 
@@ -197,40 +182,56 @@ installed during the `installdepends` step.
 For example:
 
 ```bash
-depends=("ncurses" "gettext")
+depends=(
+    'gettext'
+    'ncurses'
+)
 ```
 
 #### `files`
 
-A list of external files required by the port, one per line. The format of each
-line is as follows:
+An array of external files required by the port, one per line.
+
+##### Simple downloads
+
+The format of each entry is as follows:
 
 ```text
-URL NAME HASH
+URL#HASH
 ```
 
-Where `URL` is the URL from where the file will be downloaded (using `curl`),
-`NAME` is the output name of the downloaded file, and `HASH` is an optional
-MD5, SHA1, or SHA256 hash that will be used for verification when
-[`auth_type`](#auth_type) is set to either of those hash functions.
+Where `URL` is the URL from where the file will be downloaded (using `curl`)
+and `HASH` is the SHA256 hash that will be used for verification.
 
 For example:
 
-_With PGP signatures_
 ```bash
-files="https://example.com/foo-${version}.tar.xz foo-${version}.tar.xz
-https://example.com/foo-${version}.tar.xz.asc foo-${version}.tar.xz.asc"
-```
-_With a SHA256 hash_
-```bash
-files="https://example.com/foo-${version}.tar.xz foo-${version}.tar.xz 9acd50f9a2af37e471f761c3fe7b8dea5617e51dac802fe6c177b74abf0abb5a"
+files=(
+    "https://example.com/foo-${version}.tar.xz#9acd50f9a2af37e471f761c3fe7b8dea5617e51dac802fe6c177b74abf0abb5a"
+)
 ```
 
 If a file is a compressed tar archive, a gzip compressed file or a zip
 compressed file, it will be extracted.
 
-If a file is an `.asc` file (PGP signature) it will be imported into `gpg`'s
-keyring and can later be used for verification using [`auth_opts`](#auth_opts).
+##### Git repositories
+
+The format of each entry is as follows:
+
+```text
+git+URL#REVISION
+```
+
+Where `URL` is the URL where the repository is located
+and `REVISION` can be any revision qualifier that is accepted by `git fetch`.
+
+For example:
+
+```bash
+files=(
+    'git+https://gn.googlesource.com/gn#fae280eabe5d31accc53100137459ece19a7a295'
+)
+```
 
 #### `icon_file`
 
@@ -284,14 +285,14 @@ filename.
 #### `workdir`
 
 The working directory used for executing other commands via `run` as well as
-cleanup. Usually the directory name of the upacked source archive.
+cleanup. Usually the directory name of the unpacked source archive.
 
 Defaults to `$port-$version`.
 
 ### Functions
 
 The various steps of the port installation process are split into individual
-Bash functions, some of which can be overridden to provide custom behaviour,
+Bash functions, some of which can be overridden to provide custom behavior,
 like this:
 
 ```bash
@@ -305,9 +306,12 @@ mostly match the [available options](#options):
 
 - `pre_fetch`
 - `post_fetch`
+- `pre_patch`
 - `pre_configure`
-- `configure`.
+- `configure`
+- `post_configure`
 - `build`
+- `pre_install`
 - `install`
 - `post_install`
 - `clean`

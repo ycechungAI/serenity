@@ -9,7 +9,6 @@
 #pragma once
 
 #include <AK/Noncopyable.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/Vector.h>
 #include <Kernel/API/KeyCode.h>
 #include <LibVT/CharacterSet.h>
@@ -17,7 +16,8 @@
 #include <LibVT/Position.h>
 
 #ifndef KERNEL
-#    include <AK/String.h>
+#    include <AK/ByteString.h>
+#    include <AK/HashTable.h>
 #    include <LibVT/Attribute.h>
 #    include <LibVT/Line.h>
 #else
@@ -29,14 +29,11 @@ class VirtualConsole;
 
 namespace VT {
 
-enum CursorStyle {
+enum class CursorShape {
     None,
-    BlinkingBlock,
-    SteadyBlock,
-    BlinkingUnderline,
-    SteadyUnderline,
-    BlinkingBar,
-    SteadyBar
+    Block,
+    Underline,
+    Bar,
 };
 
 enum CursorKeysMode {
@@ -53,8 +50,10 @@ public:
     virtual void set_window_progress(int value, int max) = 0;
     virtual void terminal_did_resize(u16 columns, u16 rows) = 0;
     virtual void terminal_history_changed(int delta) = 0;
-    virtual void emit(const u8*, size_t) = 0;
-    virtual void set_cursor_style(CursorStyle) = 0;
+    virtual void terminal_did_perform_possibly_partial_clear() = 0;
+    virtual void emit(u8 const*, size_t) = 0;
+    virtual void set_cursor_shape(CursorShape) = 0;
+    virtual void set_cursor_blinking(bool) = 0;
 };
 
 class Terminal : public EscapeSequenceExecutor {
@@ -88,8 +87,12 @@ public:
     }
 
 #ifndef KERNEL
+    void mark_cursor();
+    OrderedHashTable<Mark> const& marks() const { return m_valid_marks; }
+
     void clear();
     void clear_history();
+    void clear_to_mark(Mark);
 #else
     virtual void clear() = 0;
     virtual void clear_history() = 0;
@@ -122,26 +125,26 @@ public:
     Line& line(size_t index)
     {
         if (m_use_alternate_screen_buffer) {
-            return m_alternate_screen_buffer[index];
+            return *m_alternate_screen_buffer[index];
         } else {
             if (index < m_history.size())
-                return m_history[(m_history_start + index) % m_history.size()];
-            return m_normal_screen_buffer[index - m_history.size()];
+                return *m_history[(m_history_start + index) % m_history.size()];
+            return *m_normal_screen_buffer[index - m_history.size()];
         }
     }
-    const Line& line(size_t index) const
+    Line const& line(size_t index) const
     {
         return const_cast<Terminal*>(this)->line(index);
     }
 
     Line& visible_line(size_t index)
     {
-        return active_buffer()[index];
+        return *active_buffer()[index];
     }
 
-    const Line& visible_line(size_t index) const
+    Line const& visible_line(size_t index) const
     {
-        return active_buffer()[index];
+        return *active_buffer()[index];
     }
 
     size_t max_history_size() const { return m_max_history_lines; }
@@ -157,7 +160,7 @@ public:
         }
 
         if (m_max_history_lines > value) {
-            NonnullOwnPtrVector<Line> new_history;
+            Vector<NonnullOwnPtr<Line>> new_history;
             new_history.ensure_capacity(value);
             auto existing_line_count = min(m_history.size(), value);
             for (size_t i = m_history.size() - existing_line_count; i < m_history.size(); ++i) {
@@ -177,13 +180,13 @@ public:
     void handle_key_press(KeyCode, u32, u8 flags);
 
 #ifndef KERNEL
-    Attribute attribute_at(const Position&) const;
+    Attribute attribute_at(Position const&) const;
 #endif
 
     bool needs_bracketed_paste() const
     {
         return m_needs_bracketed_paste;
-    };
+    }
 
     bool is_within_scroll_region(u16 line) const
     {
@@ -369,10 +372,10 @@ protected:
     void DECDC(Parameters);
 
     // DECPNM - Set numeric keypad mode
-    void DECPNM();
+    void DECKPNM();
 
     // DECPAM - Set application keypad mode
-    void DECPAM();
+    void DECKPAM();
 
 #ifndef KERNEL
     TerminalClient& m_client;
@@ -383,7 +386,7 @@ protected:
     EscapeSequenceParser m_parser;
 #ifndef KERNEL
     size_t m_history_start = 0;
-    NonnullOwnPtrVector<Line> m_history;
+    Vector<NonnullOwnPtr<Line>> m_history;
     void add_line_to_history(NonnullOwnPtr<Line>&& line)
     {
         if (max_history_size() == 0)
@@ -399,14 +402,14 @@ protected:
 
             return;
         }
-        m_history.ptr_at(m_history_start) = move(line);
+        m_history[m_history_start] = move(line);
         m_history_start = (m_history_start + 1) % m_history.size();
     }
 
-    NonnullOwnPtrVector<Line>& active_buffer() { return m_use_alternate_screen_buffer ? m_alternate_screen_buffer : m_normal_screen_buffer; };
-    const NonnullOwnPtrVector<Line>& active_buffer() const { return m_use_alternate_screen_buffer ? m_alternate_screen_buffer : m_normal_screen_buffer; };
-    NonnullOwnPtrVector<Line> m_normal_screen_buffer;
-    NonnullOwnPtrVector<Line> m_alternate_screen_buffer;
+    Vector<NonnullOwnPtr<Line>>& active_buffer() { return m_use_alternate_screen_buffer ? m_alternate_screen_buffer : m_normal_screen_buffer; }
+    Vector<NonnullOwnPtr<Line>> const& active_buffer() const { return m_use_alternate_screen_buffer ? m_alternate_screen_buffer : m_normal_screen_buffer; }
+    Vector<NonnullOwnPtr<Line>> m_normal_screen_buffer;
+    Vector<NonnullOwnPtr<Line>> m_alternate_screen_buffer;
 #endif
 
     bool m_use_alternate_screen_buffer { false };
@@ -427,21 +430,21 @@ protected:
 
     bool m_swallow_current { false };
     bool m_stomp { false };
+    bool m_in_application_keypad_mode { false };
 
-    CursorStyle m_cursor_style { BlinkingBlock };
-    CursorStyle m_saved_cursor_style { BlinkingBlock };
+    CursorShape m_cursor_shape { VT::CursorShape::Block };
+    CursorShape m_saved_cursor_shape { VT::CursorShape::Block };
+    bool m_cursor_is_blinking_set { true };
 
     bool m_needs_bracketed_paste { false };
 
     Attribute m_current_attribute;
     Attribute m_saved_attribute;
 
-#ifdef KERNEL
-    OwnPtr<Kernel::KString> m_current_window_title;
-    NonnullOwnPtrVector<Kernel::KString> m_title_stack;
-#else
-    String m_current_window_title;
-    Vector<String> m_title_stack;
+#ifndef KERNEL
+    ByteString m_current_window_title;
+    Vector<ByteString> m_title_stack;
+    OrderedHashTable<Mark> m_valid_marks;
 #endif
 
 #ifndef KERNEL

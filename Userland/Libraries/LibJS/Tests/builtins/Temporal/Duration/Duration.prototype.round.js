@@ -161,4 +161,36 @@ describe("errors", () => {
             "A starting point is required for balancing calendar units"
         );
     });
+
+    // Spec Issue: https://github.com/tc39/proposal-temporal/issues/2124
+    // Spec Fix: https://github.com/tc39/proposal-temporal/commit/66f7464aaec64d3cd21fb2ec37f6502743b9a730
+    test("balancing calendar units with largestUnit set to 'year' and relativeTo unset throws instead of crashing", () => {
+        const duration = new Temporal.Duration(1);
+        expect(() => {
+            duration.round({ largestUnit: "year" });
+        }).toThrowWithMessage(
+            RangeError,
+            "A starting point is required for balancing calendar units"
+        );
+    });
+
+    test("invalid calendar throws range exception when performing round", () => {
+        const duration = Temporal.Duration.from({ nanoseconds: 0 });
+
+        const calendar = new (class extends Temporal.Calendar {
+            dateAdd(date, duration, options) {
+                return date;
+            }
+        })("iso8601");
+
+        expect(() => {
+            duration.round({
+                relativeTo: new Temporal.PlainDate(1997, 5, 10, calendar),
+                smallestUnit: "years",
+            });
+        }).toThrowWithMessage(
+            RangeError,
+            "Invalid calendar, dateAdd() function returned result implying a year is zero days long"
+        );
+    });
 });

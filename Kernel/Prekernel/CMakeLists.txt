@@ -1,16 +1,13 @@
 set(SOURCES
     UBSanitizer.cpp
-    ../MiniStdLib.cpp
+    ../Library/MiniStdLib.cpp
     boot.S
     multiboot.S
     init.cpp
     ../../Userland/Libraries/LibELF/Relocation.cpp
     )
 
-
-if ("${SERENITY_ARCH}" STREQUAL "i686")
-    set(PREKERNEL_TARGET Prekernel32)
-elseif ("${SERENITY_ARCH}" STREQUAL "x86_64")
+if ("${SERENITY_ARCH}" STREQUAL "x86_64")
     set(PREKERNEL_TARGET Prekernel64)
 elseif("${SERENITY_ARCH}" STREQUAL "aarch64")
     message(SEND_ERROR "Prekernel is not needed on aarch64 and should not be compiled!")
@@ -19,6 +16,7 @@ endif()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static")
 
 add_executable(${PREKERNEL_TARGET} ${SOURCES})
+add_dependencies(${PREKERNEL_TARGET} install_libc_headers)
 target_compile_options(${PREKERNEL_TARGET} PRIVATE -no-pie -fno-pic -fno-threadsafe-statics)
 
 target_link_options(${PREKERNEL_TARGET} PRIVATE LINKER:-T ${CMAKE_CURRENT_SOURCE_DIR}/linker.ld -nostdlib LINKER:--no-pie)
@@ -43,3 +41,7 @@ get_target_property(PREKERNEL_TARGET_OPTIONS ${PREKERNEL_TARGET} COMPILE_OPTIONS
 list(REMOVE_ITEM PREKERNEL_TARGET_OPTIONS "-fsanitize-coverage=trace-pc")
 list(REMOVE_ITEM PREKERNEL_TARGET_OPTIONS "-fsanitize=kernel-address")
 set_target_properties(${PREKERNEL_TARGET} PROPERTIES COMPILE_OPTIONS "${PREKERNEL_TARGET_OPTIONS}")
+
+if (ENABLE_KERNEL_ADDRESS_SANITIZER)
+    add_compile_definitions(KERNEL_ADDRESS_SANITIZER_ENABLED)
+endif()

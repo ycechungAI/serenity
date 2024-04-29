@@ -40,10 +40,6 @@ private:
 
         switch (event.key()) {
         case KeyCode::Key_Tab:
-        case KeyCode::Key_Left:
-        case KeyCode::Key_Right:
-        case KeyCode::Key_Up:
-        case KeyCode::Key_Down:
         case KeyCode::Key_Return:
             return true;
         default:
@@ -68,8 +64,8 @@ public:
 
 private:
     InfinitelyScrollableTableView()
-        : m_horizontal_scroll_end_timer(Core::Timer::construct())
-        , m_vertical_scroll_end_timer(Core::Timer::construct())
+        : m_horizontal_scroll_end_timer(Core::Timer::try_create().release_value_but_fixme_should_propagate_errors())
+        , m_vertical_scroll_end_timer(Core::Timer::try_create().release_value_but_fixme_should_propagate_errors())
     {
     }
     virtual void did_scroll() override;
@@ -77,6 +73,8 @@ private:
     virtual void mousedown_event(GUI::MouseEvent&) override;
     virtual void mouseup_event(GUI::MouseEvent&) override;
     virtual void drop_event(GUI::DropEvent&) override;
+
+    bool is_dragging() const { return m_is_dragging_for_cut || m_is_dragging_for_extend || m_is_dragging_for_select; }
 
     bool m_is_hovering_extend_zone { false };
     bool m_is_hovering_cut_zone { false };
@@ -109,7 +107,7 @@ public:
 
     void move_cursor(GUI::AbstractView::CursorMovement);
 
-    NonnullRefPtr<SheetModel> model() { return m_sheet_model; };
+    NonnullRefPtr<SheetModel> model() { return m_sheet_model; }
 
 private:
     virtual void hide_event(GUI::HideEvent&) override;
@@ -121,7 +119,7 @@ private:
 
     class EditingDelegate final : public GUI::StringModelEditingDelegate {
     public:
-        EditingDelegate(const Sheet& sheet)
+        EditingDelegate(Sheet const& sheet)
             : m_sheet(sheet)
         {
         }
@@ -148,7 +146,7 @@ private:
 
     private:
         bool m_has_set_initial_value { false };
-        const Sheet& m_sheet;
+        Sheet const& m_sheet;
     };
 
     class TableCellPainter final : public GUI::TableCellPaintingDelegate {
@@ -157,7 +155,7 @@ private:
             : m_table_view(view)
         {
         }
-        void paint(GUI::Painter&, const Gfx::IntRect&, const Gfx::Palette&, const GUI::ModelIndex&) override;
+        void paint(GUI::Painter&, Gfx::IntRect const&, Gfx::Palette const&, const GUI::ModelIndex&) override;
 
     private:
         const GUI::TableView& m_table_view;

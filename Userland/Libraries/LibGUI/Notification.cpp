@@ -15,18 +15,19 @@ namespace GUI {
 class ConnectionToNotificationServer final
     : public IPC::ConnectionToServer<NotificationClientEndpoint, NotificationServerEndpoint>
     , public NotificationClientEndpoint {
-    IPC_CLIENT_CONNECTION(ConnectionToNotificationServer, "/tmp/portal/notify")
+    IPC_CLIENT_CONNECTION(ConnectionToNotificationServer, "/tmp/session/%sid/portal/notify"sv)
 
     friend class Notification;
 
 public:
     virtual void die() override
     {
-        m_notification->connection_closed();
+        if (!m_notification->m_destroyed)
+            m_notification->connection_closed();
     }
 
 private:
-    explicit ConnectionToNotificationServer(NonnullOwnPtr<Core::Stream::LocalSocket> socket, Notification* notification)
+    explicit ConnectionToNotificationServer(NonnullOwnPtr<Core::LocalSocket> socket, Notification* notification)
         : IPC::ConnectionToServer<NotificationClientEndpoint, NotificationServerEndpoint>(*this, move(socket))
         , m_notification(notification)
     {

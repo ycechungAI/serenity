@@ -1,23 +1,15 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=zlib
-version=1.2.11
-useconfigure=true
-files="https://www.zlib.net/zlib-${version}.tar.gz zlib-${version}.tar.gz c3e5e9fdd5004dcb542feda5ee4f0ff0744628baf8ed2dd5d66f8ca1197cb1a1"
-auth_type="sha256"
-
-pre_configure() {
-    # HACK: Even though Clang generates PIC objects by default, an R_386_PC32
-    # relocation still slips into libz.a if we don't set -fPIC explicitly.
-    export CFLAGS="-fPIC -O3"
-}
+port='zlib'
+version='1.3.1'
+useconfigure='true'
+files=(
+    "https://github.com/madler/zlib/releases/download/v${version}/zlib-${version}.tar.gz#9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23"
+)
 
 configure() {
-    # Set uname to linux to prevent it finding the host's `libtool` on e.g. Darwin
-    run ./configure --uname=linux
-}
-
-install() {
-    run make DESTDIR=${SERENITY_INSTALL_ROOT} "${installopts[@]}" install
-    ${CC} -shared -o ${SERENITY_INSTALL_ROOT}/usr/local/lib/libz.so -Wl,-soname,libz.so -Wl,--whole-archive ${SERENITY_INSTALL_ROOT}/usr/local/lib/libz.a -Wl,--no-whole-archive
-    rm -f ${SERENITY_INSTALL_ROOT}/usr/local/lib/libz.la
+    # No SONAME is set on unknown systems by default. Manually set it
+    # to an unversioned name to avoid needing to rebuild dependent
+    # ports after a minor version upgrade.
+    export LDSHARED="$CC -shared -Wl,-soname,libz.so"
+    run ./configure --uname=SerenityOS
 }

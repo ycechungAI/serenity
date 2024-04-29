@@ -6,12 +6,11 @@
 
 #pragma once
 
-#include <AK/NonnullOwnPtrVector.h>
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <AK/WeakPtr.h>
-#include <LibCore/Object.h>
-#include <LibGfx/Font.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibCore/EventReceiver.h>
+#include <LibGfx/Font/Font.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/Rect.h>
 #include <WindowServer/Cursor.h>
@@ -24,14 +23,14 @@ class ConnectionFromClient;
 class Menubar;
 class Window;
 
-class Menu final : public Core::Object {
+class Menu final : public Core::EventReceiver {
     C_OBJECT(Menu);
 
 public:
     virtual ~Menu() override = default;
 
     ConnectionFromClient* client() { return m_client; }
-    const ConnectionFromClient* client() const { return m_client; }
+    ConnectionFromClient const* client() const { return m_client; }
     int menu_id() const { return m_menu_id; }
 
     bool is_open() const;
@@ -40,8 +39,8 @@ public:
 
     bool is_empty() const { return m_items.is_empty(); }
     size_t item_count() const { return m_items.size(); }
-    const MenuItem& item(size_t index) const { return m_items.at(index); }
-    MenuItem& item(size_t index) { return m_items.at(index); }
+    MenuItem const& item(size_t index) const { return *m_items.at(index); }
+    MenuItem& item(size_t index) { return *m_items.at(index); }
 
     MenuItem* item_by_identifier(unsigned identifier)
     {
@@ -56,15 +55,20 @@ public:
         return found_item;
     }
 
+    void update_alt_shortcuts_for_items();
     void add_item(NonnullOwnPtr<MenuItem>);
 
     String const& name() const { return m_name; }
+    void set_name(String);
+
+    int minimum_width() const { return m_minimum_width; }
+    void set_minimum_width(int);
 
     template<typename Callback>
     IterationDecision for_each_item(Callback callback)
     {
         for (auto& item : m_items) {
-            IterationDecision decision = callback(item);
+            IterationDecision decision = callback(*item);
             if (decision != IterationDecision::Continue)
                 return decision;
         }
@@ -72,10 +76,16 @@ public:
     }
 
     Gfx::IntRect rect_in_window_menubar() const { return m_rect_in_window_menubar; }
-    void set_rect_in_window_menubar(const Gfx::IntRect& rect) { m_rect_in_window_menubar = rect; }
+    void set_rect_in_window_menubar(Gfx::IntRect const& rect) { m_rect_in_window_menubar = rect; }
+
+    Gfx::IntPoint unadjusted_position() const { return m_unadjusted_position; }
+    void set_unadjusted_position(Gfx::IntPoint position) { m_unadjusted_position = position; }
 
     Window* menu_window() { return m_menu_window.ptr(); }
-    Window& ensure_menu_window(Gfx::IntPoint const&);
+    Window& ensure_menu_window(Gfx::IntPoint);
+
+    // Invalidates the menu window so that it gets rebuilt the next time it's showed.
+    void invalidate_menu_window();
 
     Window* window_menu_of() { return m_window_menu_of; }
     void set_window_menu_of(Window& window) { m_window_menu_of = window; }
@@ -94,7 +104,7 @@ public:
 
     void draw();
     void draw(MenuItem const&, bool = false);
-    const Gfx::Font& font() const;
+    Gfx::Font const& font() const;
 
     MenuItem* item_with_identifier(unsigned);
     bool remove_item_with_identifier(unsigned);
@@ -102,6 +112,7 @@ public:
     void redraw(MenuItem const&);
 
     MenuItem* hovered_item() const;
+    int hovered_item_index() const { return m_hovered_item_index; }
 
     void set_hovered_index(int index, bool make_input = false);
 
@@ -113,10 +124,11 @@ public:
 
     void set_visible(bool);
 
-    void popup(const Gfx::IntPoint&);
-    void do_popup(const Gfx::IntPoint&, bool make_input, bool as_submenu = false);
+    void popup(Gfx::IntPoint);
+    void do_popup(Gfx::IntPoint, bool make_input, bool as_submenu = false);
+    void open_button_menu(Gfx::IntPoint position, Gfx::IntRect const& button_rect);
 
-    bool is_menu_ancestor_of(const Menu&) const;
+    bool is_menu_ancestor_of(Menu const&) const;
 
     void redraw_if_theme_changed();
 
@@ -126,18 +138,18 @@ public:
     void descend_into_submenu_at_hovered_item();
     void open_hovered_item(bool leave_menu_open);
 
-    const Vector<size_t>* items_with_alt_shortcut(u32 alt_shortcut) const;
+    Vector<size_t> const* items_with_alt_shortcut(u32 alt_shortcut) const;
 
 private:
-    Menu(ConnectionFromClient*, int menu_id, String name);
+    Menu(ConnectionFromClient*, int menu_id, String name, int minimum_width = 0);
 
     virtual void event(Core::Event&) override;
 
-    void handle_mouse_move_event(const MouseEvent&);
+    void handle_mouse_move_event(MouseEvent const&);
     size_t visible_item_count() const;
     Gfx::IntRect stripe_rect();
 
-    int item_index_at(const Gfx::IntPoint&);
+    int item_index_at(Gfx::IntPoint);
     static constexpr int padding_between_text_and_shortcut() { return 50; }
     void did_activate(MenuItem&, bool leave_menu_open);
     void update_for_new_hovered_item(bool make_input = false);
@@ -147,9 +159,11 @@ private:
     ConnectionFromClient* m_client { nullptr };
     int m_menu_id { 0 };
     String m_name;
+    int m_minimum_width { 0 };
     u32 m_alt_shortcut_character { 0 };
     Gfx::IntRect m_rect_in_window_menubar;
-    NonnullOwnPtrVector<MenuItem> m_items;
+    Gfx::IntPoint m_unadjusted_position;
+    Vector<NonnullOwnPtr<MenuItem>> m_items;
     RefPtr<Window> m_menu_window;
 
     WeakPtr<Window> m_window_menu_of;

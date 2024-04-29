@@ -1,16 +1,18 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2019-2020, Shannon Booth <shannon.ml.booth@gmail.com>
+ * Copyright (c) 2019-2020, Shannon Booth <shannon@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Assertions.h>
+#include <AK/ByteString.h>
 #include <AK/Function.h>
-#include <AK/String.h>
-#include <Kernel/Arch/x86/IO.h>
+#if ARCH(X86_64)
+#    include <Kernel/Arch/x86_64/IO.h>
+#endif
 #include <LibCore/ArgsParser.h>
-#include <LibCore/Object.h>
+#include <LibCore/EventReceiver.h>
 #include <LibTest/CrashTest.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +23,7 @@
 
 using Test::Crash;
 
-#ifdef __clang__
+#if defined(AK_COMPILER_CLANG)
 #    pragma clang optimize off
 #else
 #    pragma GCC optimize("O0")
@@ -29,6 +31,11 @@ using Test::Crash;
 
 int main(int argc, char** argv)
 {
+    Vector<StringView> arguments;
+    arguments.ensure_capacity(argc);
+    for (auto i = 0; i < argc; ++i)
+        arguments.append({ argv[i], strlen(argv[i]) });
+
     bool do_all_crash_types = false;
     bool do_segmentation_violation = false;
     bool do_division_by_zero = false;
@@ -45,8 +52,9 @@ int main(int argc, char** argv)
     bool do_legitimate_syscall = false;
     bool do_execute_non_executable_memory = false;
     bool do_trigger_user_mode_instruction_prevention = false;
+#if ARCH(X86_64)
     bool do_use_io_instruction = false;
-    bool do_read_cpu_counter = false;
+#endif
     bool do_pledge_violation = false;
     bool do_failing_assertion = false;
     bool do_deref_null_refptr = false;
@@ -68,11 +76,12 @@ int main(int argc, char** argv)
     args_parser.add_option(do_invalid_stack_pointer_on_syscall, "Make a syscall while using an invalid stack pointer", nullptr, 'T');
     args_parser.add_option(do_invalid_stack_pointer_on_page_fault, "Trigger a page fault while using an invalid stack pointer", nullptr, 't');
     args_parser.add_option(do_syscall_from_writeable_memory, "Make a syscall from writeable memory", nullptr, 'S');
-    args_parser.add_option(do_legitimate_syscall, "Make a syscall from legitimate memory (but outside msyscall)", nullptr, 'y');
+    args_parser.add_option(do_legitimate_syscall, "Make a syscall from legitimate memory (but outside syscall-code mapped region)", nullptr, 'y');
     args_parser.add_option(do_execute_non_executable_memory, "Attempt to execute non-executable memory (not mapped with PROT_EXEC)", nullptr, 'X');
     args_parser.add_option(do_trigger_user_mode_instruction_prevention, "Attempt to trigger an x86 User Mode Instruction Prevention fault. WARNING: This test runs only when invoked manually, see #10042.", nullptr, 'U');
+#if ARCH(X86_64)
     args_parser.add_option(do_use_io_instruction, "Use an x86 I/O instruction in userspace", nullptr, 'I');
-    args_parser.add_option(do_read_cpu_counter, "Read the x86 TSC (Time Stamp Counter) directly", nullptr, 'c');
+#endif
     args_parser.add_option(do_pledge_violation, "Violate pledge()'d promises", nullptr, 'p');
     args_parser.add_option(do_failing_assertion, "Perform a failing assertion", nullptr, 'n');
     args_parser.add_option(do_deref_null_refptr, "Dereference a null RefPtr", nullptr, 'R');
@@ -80,11 +89,11 @@ int main(int argc, char** argv)
     if (argc == 1) {
         do_all_crash_types = true;
     } else if (argc != 2) {
-        args_parser.print_usage(stderr, argv[0]);
+        args_parser.print_usage(stderr, arguments[0]);
         exit(1);
     }
 
-    args_parser.parse(argc, argv);
+    args_parser.parse(arguments);
 
     Crash::RunType run_type = do_all_crash_types ? Crash::RunType::UsingChildProcess
                                                  : Crash::RunType::UsingCurrentProcess;
@@ -92,7 +101,7 @@ int main(int argc, char** argv)
 
     if (do_segmentation_violation || do_all_crash_types) {
         any_failures |= !Crash("Segmentation violation", []() {
-            volatile int* crashme = nullptr;
+            int volatile* crashme = nullptr;
             *crashme = 0xbeef;
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
@@ -100,16 +109,16 @@ int main(int argc, char** argv)
 
     if (do_division_by_zero || do_all_crash_types) {
         any_failures |= !Crash("Division by zero", []() {
-            volatile int lala = 10;
-            volatile int zero = 0;
-            [[maybe_unused]] volatile int test = lala / zero;
+            int volatile lala = 10;
+            int volatile zero = 0;
+            [[maybe_unused]] int volatile test = lala / zero;
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
 
     if (do_illegal_instruction || do_all_crash_types) {
         any_failures |= !Crash("Illegal instruction", []() {
-            asm volatile("ud2");
+            __builtin_trap();
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
@@ -123,30 +132,33 @@ int main(int argc, char** argv)
 
     if (do_read_from_uninitialized_malloc_memory || do_all_crash_types) {
         any_failures |= !Crash("Read from uninitialized malloc memory", []() {
-            auto* uninitialized_memory = (volatile u32**)malloc(1024);
+            auto* uninitialized_memory = (u32 volatile**)malloc(1024);
             if (!uninitialized_memory)
                 return Crash::Failure::UnexpectedError;
 
-            [[maybe_unused]] volatile auto x = uninitialized_memory[0][0];
+            [[maybe_unused]] auto volatile x = uninitialized_memory[0][0];
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
 
     if (do_read_from_freed_memory || do_all_crash_types) {
         any_failures |= !Crash("Read from freed memory", []() {
-            auto* uninitialized_memory = (volatile u32**)malloc(1024);
+            auto* uninitialized_memory = (u32 volatile**)malloc(1024);
             if (!uninitialized_memory)
                 return Crash::Failure::UnexpectedError;
 
             free(uninitialized_memory);
-            [[maybe_unused]] volatile auto x = uninitialized_memory[4][0];
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wuse-after-free"
+            [[maybe_unused]] auto volatile x = uninitialized_memory[4][0];
+#pragma GCC diagnostic pop
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
 
     if (do_write_to_uninitialized_malloc_memory || do_all_crash_types) {
         any_failures |= !Crash("Write to uninitialized malloc memory", []() {
-            auto* uninitialized_memory = (volatile u32**)malloc(1024);
+            auto* uninitialized_memory = (u32 volatile**)malloc(1024);
             if (!uninitialized_memory)
                 return Crash::Failure::UnexpectedError;
 
@@ -157,12 +169,15 @@ int main(int argc, char** argv)
 
     if (do_write_to_freed_memory || do_all_crash_types) {
         any_failures |= !Crash("Write to freed memory", []() {
-            auto* uninitialized_memory = (volatile u32**)malloc(1024);
+            auto* uninitialized_memory = (u32 volatile**)malloc(1024);
             if (!uninitialized_memory)
                 return Crash::Failure::UnexpectedError;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wuse-after-free"
             free(uninitialized_memory);
             uninitialized_memory[4][0] = 1;
+#pragma GCC diagnostic pop
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
@@ -190,7 +205,17 @@ int main(int argc, char** argv)
                 return Crash::Failure::UnexpectedError;
 
             u8* makeshift_esp = makeshift_stack + 2048;
+#if ARCH(X86_64)
             asm volatile("mov %%eax, %%esp" ::"a"(makeshift_esp));
+#elif ARCH(AARCH64)
+            (void)makeshift_esp;
+            TODO_AARCH64();
+#elif ARCH(RISCV64)
+            (void)makeshift_esp;
+            TODO_RISCV64();
+#else
+#    error Unknown architecture
+#endif
             getuid();
             dbgln("Survived syscall with MAP_STACK stack");
 
@@ -199,7 +224,17 @@ int main(int argc, char** argv)
                 return Crash::Failure::UnexpectedError;
 
             u8* bad_esp = bad_stack + 2048;
+#if ARCH(X86_64)
             asm volatile("mov %%eax, %%esp" ::"a"(bad_esp));
+#elif ARCH(AARCH64)
+            (void)bad_esp;
+            TODO_AARCH64();
+#elif ARCH(RISCV64)
+            (void)bad_esp;
+            TODO_RISCV64();
+#else
+#    error Unknown architecture
+#endif
             getuid();
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
@@ -212,12 +247,17 @@ int main(int argc, char** argv)
                 return Crash::Failure::UnexpectedError;
 
             u8* bad_esp = bad_stack + 2048;
-#if ARCH(I386)
-            asm volatile("mov %%eax, %%esp" ::"a"(bad_esp));
-            asm volatile("pushl $0");
-#else
+#if ARCH(X86_64)
             asm volatile("movq %%rax, %%rsp" ::"a"(bad_esp));
             asm volatile("pushq $0");
+#elif ARCH(AARCH64)
+            (void)bad_esp;
+            TODO_AARCH64();
+#elif ARCH(RISCV64)
+            (void)bad_esp;
+            TODO_RISCV64();
+#else
+#    error Unknown architecture
 #endif
 
             return Crash::Failure::DidNotCrash;
@@ -233,7 +273,7 @@ int main(int argc, char** argv)
     }
 
     if (do_legitimate_syscall || do_all_crash_types) {
-        any_failures |= !Crash("Regular syscall from outside msyscall", []() {
+        any_failures |= !Crash("Regular syscall from outside syscall-code mapped region", []() {
             // Since 'crash' is dynamically linked, and DynamicLoader only allows LibSystem to make syscalls, this should kill us:
             Syscall::invoke(Syscall::SC_getuid);
             return Crash::Failure::DidNotCrash;
@@ -255,11 +295,20 @@ int main(int argc, char** argv)
 
     if (do_trigger_user_mode_instruction_prevention) {
         any_failures |= !Crash("Trigger x86 User Mode Instruction Prevention", []() {
+#if ARCH(X86_64)
             asm volatile("str %eax");
+#elif ARCH(AARCH64)
+            TODO_AARCH64();
+#elif ARCH(RISCV64)
+            TODO_RISCV64();
+#else
+#    error Unknown architecture
+#endif
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
 
+#if ARCH(X86_64)
     if (do_use_io_instruction || do_all_crash_types) {
         any_failures |= !Crash("Attempt to use an I/O instruction", [] {
             u8 keyboard_status = IO::in8(0x64);
@@ -267,13 +316,7 @@ int main(int argc, char** argv)
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
-
-    if (do_read_cpu_counter || do_all_crash_types) {
-        any_failures |= !Crash("Read the CPU timestamp counter", [] {
-            asm volatile("rdtsc");
-            return Crash::Failure::DidNotCrash;
-        }).run(run_type);
-    }
+#endif
 
     if (do_pledge_violation || do_all_crash_types) {
         any_failures |= !Crash("Violate pledge()'d promises", [] {
@@ -295,7 +338,7 @@ int main(int argc, char** argv)
 
     if (do_deref_null_refptr || do_all_crash_types) {
         any_failures |= !Crash("Dereference a null RefPtr", [] {
-            RefPtr<Core::Object> p;
+            RefPtr<Core::EventReceiver> p;
             *p;
             return Crash::Failure::DidNotCrash;
         }).run(run_type);

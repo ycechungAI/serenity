@@ -7,11 +7,11 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
+#include <AK/ByteString.h>
 #include <AK/HashMap.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
-#include <AK/String.h>
 #include <AK/Types.h>
 #include <LibHTTP/HttpRequest.h>
 #include <RequestServer/ConnectionCache.h>
@@ -46,7 +46,7 @@ void init(TSelf* self, TJob job)
 
         self->did_finish(success);
     };
-    job->on_progress = [self](Optional<u32> total, u32 current) {
+    job->on_progress = [self](Optional<u64> total, u64 current) {
         self->did_progress(total, current);
     };
     if constexpr (requires { job->on_certificate_requested; }) {
@@ -61,7 +61,7 @@ void init(TSelf* self, TJob job)
 }
 
 template<typename TBadgedProtocol, typename TPipeResult>
-OwnPtr<Request> start_request(TBadgedProtocol&& protocol, ConnectionFromClient& client, const String& method, const URL& url, const HashMap<String, String>& headers, ReadonlyBytes body, TPipeResult&& pipe_result)
+OwnPtr<Request> start_request(TBadgedProtocol&& protocol, i32 request_id, ConnectionFromClient& client, ByteString const& method, const URL::URL& url, HashMap<ByteString, ByteString> const& headers, ReadonlyBytes body, TPipeResult&& pipe_result, Core::ProxyData proxy_data = {})
 {
     using TJob = typename TBadgedProtocol::Type::JobType;
     using TRequest = typename TBadgedProtocol::Type::RequestType;
@@ -71,8 +71,22 @@ OwnPtr<Request> start_request(TBadgedProtocol&& protocol, ConnectionFromClient& 
     }
 
     HTTP::HttpRequest request;
-    if (method.equals_ignoring_case("post"))
+    if (method.equals_ignoring_ascii_case("post"sv))
         request.set_method(HTTP::HttpRequest::Method::POST);
+    else if (method.equals_ignoring_ascii_case("head"sv))
+        request.set_method(HTTP::HttpRequest::Method::HEAD);
+    else if (method.equals_ignoring_ascii_case("delete"sv))
+        request.set_method(HTTP::HttpRequest::Method::DELETE);
+    else if (method.equals_ignoring_ascii_case("patch"sv))
+        request.set_method(HTTP::HttpRequest::Method::PATCH);
+    else if (method.equals_ignoring_ascii_case("options"sv))
+        request.set_method(HTTP::HttpRequest::Method::OPTIONS);
+    else if (method.equals_ignoring_ascii_case("trace"sv))
+        request.set_method(HTTP::HttpRequest::Method::TRACE);
+    else if (method.equals_ignoring_ascii_case("connect"sv))
+        request.set_method(HTTP::HttpRequest::Method::CONNECT);
+    else if (method.equals_ignoring_ascii_case("put"sv))
+        request.set_method(HTTP::HttpRequest::Method::PUT);
     else
         request.set_method(HTTP::HttpRequest::Method::GET);
     request.set_url(url);
@@ -83,15 +97,15 @@ OwnPtr<Request> start_request(TBadgedProtocol&& protocol, ConnectionFromClient& 
         return {};
     request.set_body(allocated_body_result.release_value());
 
-    auto output_stream = MUST(Core::Stream::File::adopt_fd(pipe_result.value().write_fd, Core::Stream::OpenMode::Write));
+    auto output_stream = MUST(Core::File::adopt_fd(pipe_result.value().write_fd, Core::File::OpenMode::Write));
     auto job = TJob::construct(move(request), *output_stream);
-    auto protocol_request = TRequest::create_with_job(forward<TBadgedProtocol>(protocol), client, (TJob&)*job, move(output_stream));
+    auto protocol_request = TRequest::create_with_job(forward<TBadgedProtocol>(protocol), client, (TJob&)*job, move(output_stream), request_id);
     protocol_request->set_request_fd(pipe_result.value().read_fd);
 
     if constexpr (IsSame<typename TBadgedProtocol::Type, HttpsProtocol>)
-        ConnectionCache::get_or_create_connection(ConnectionCache::g_tls_connection_cache, url, *job);
+        ConnectionCache::get_or_create_connection(ConnectionCache::g_tls_connection_cache, url, job, proxy_data);
     else
-        ConnectionCache::get_or_create_connection(ConnectionCache::g_tcp_connection_cache, url, *job);
+        ConnectionCache::get_or_create_connection(ConnectionCache::g_tcp_connection_cache, url, job, proxy_data);
 
     return protocol_request;
 }

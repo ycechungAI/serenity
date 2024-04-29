@@ -6,10 +6,16 @@
 
 #pragma once
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
+#include <AK/Forward.h>
+#include <AK/RefPtr.h>
+#include <AK/StringView.h>
 #include <AK/Vector.h>
+#include <LibCore/Timer.h>
 #include <LibGUI/Frame.h>
 #include <LibGfx/Rect.h>
+
+namespace MasterWord {
 
 class WordGame : public GUI::Frame {
     C_OBJECT(WordGame);
@@ -19,19 +25,26 @@ public:
 
     void reset();
     void set_use_system_theme(bool b);
+    void set_check_guesses_in_dictionary(bool b);
     void set_word_length(size_t length);
     void set_max_guesses(size_t max_guesses);
     Gfx::IntSize game_size() const;
 
-    Optional<String> random_word(size_t length);
+    Optional<ByteString> random_word(size_t length);
     size_t shortest_word();
     size_t longest_word();
+    bool is_checking_guesses() const;
 
     void add_guess(AK::StringView guess);
+    bool is_in_dictionary(AK::StringView guess);
+
+    Function<void(Optional<StringView>)> on_message;
 
 private:
     WordGame();
     void read_words();
+    void show_message(StringView message) const;
+    void clear_message() const;
 
     virtual void paint_event(GUI::PaintEvent&) override;
     virtual void keydown_event(GUI::KeyEvent&) override;
@@ -42,6 +55,8 @@ private:
 
     size_t m_max_guesses { 6 };
     size_t m_num_letters { 5 };
+    bool m_check_guesses { false };
+    bool m_last_word_invalid { false };
     static constexpr int m_letter_width { 40 };
     static constexpr int m_letter_spacing { 5 };
     static constexpr int m_outer_margin { 20 };
@@ -53,6 +68,7 @@ private:
     Color m_wrong_letter_color { m_border_color };
     Color m_background_color { Color::from_rgb(0x121213) };
     Color m_text_color { Color::White };
+    Color m_word_not_in_dict_color { Color::from_argb(0x40aa0000) };
 
     enum LetterState {
         Correct,
@@ -61,13 +77,17 @@ private:
     };
 
     struct Guess {
-        AK::String text;
+        AK::ByteString text;
         AK::Vector<LetterState> letter_states;
     };
 
     AK::Vector<Guess> m_guesses;
-    AK::String m_current_guess;
-    AK::String m_current_word;
+    AK::ByteString m_current_guess;
+    AK::ByteString m_current_word;
 
-    HashMap<size_t, AK::Vector<String>> m_words;
+    HashMap<size_t, AK::Vector<ByteString>> m_words;
+
+    NonnullRefPtr<Core::Timer> m_clear_message_timer;
 };
+
+}

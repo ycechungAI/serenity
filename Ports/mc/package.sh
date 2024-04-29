@@ -1,21 +1,26 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=mc
-version=4.8.27
-useconfigure=true
-files="https://github.com/MidnightCommander/mc/archive/refs/tags/${version}.tar.gz ${port}-${version}.tar.gz 3bab1460d187e1f09409be4bb8550ea7dab125fb9b50036a8dbd2b16e8b1985b"
-auth_type=sha256
-depends=("gettext" "glib" "libtool" "ncurses" "vim")
-configopts=(
-    "--disable-largefile"
-    "--disable-vfs"
-    "--without-edit"
-    "--without-x"
-    "--with-homedir"
-    "--with-screen=ncurses"
-    "--with-ncurses-includes=$SERENITY_BUILD_DIR/Root/usr/local/include/ncurses"
-    "--with-ncurses-libs=$SERENITY_BUILD_DIR/Root/usr/local/lib"
+port='mc'
+version='4.8.31'
+useconfigure='true'
+files=(
+    "http://ftp.midnight-commander.org/mc-${version}.tar.xz#24191cf8667675b8e31fc4a9d18a0a65bdc0598c2c5c4ea092494cd13ab4ab1a"
 )
-
-pre_patch() {
-    run ./autogen.sh
-}
+depends=(
+    'gettext'
+    'glib'
+    'ncurses'
+    'vim'
+)
+configopts=(
+    "--with-sysroot=${SERENITY_INSTALL_ROOT}"
+    '--disable-largefile'
+    '--disable-vfs'
+    '--without-edit'
+    '--without-x'
+    '--with-homedir'
+    '--with-screen=ncurses'
+)
+use_fresh_config_sub='true'
+config_sub_paths=(
+    'config/config.sub'
+)

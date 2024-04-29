@@ -6,10 +6,8 @@
 
 #pragma once
 
-#include <AK/RefCounted.h>
 #include <AK/Types.h>
-#include <AK/Vector.h>
-#include <Kernel/PhysicalAddress.h>
+#include <Kernel/Memory/PhysicalAddress.h>
 
 namespace Kernel::ACPI {
 
@@ -322,13 +320,11 @@ struct [[gnu::packed]] MCFG {
     u64 reserved;
     PCI_MMIO_Descriptor descriptors[];
 };
-}
 
-class Parser;
-
-namespace StaticParsing {
-Optional<PhysicalAddress> find_rsdp();
-Optional<PhysicalAddress> find_table(PhysicalAddress rsdp, StringView signature);
+struct [[gnu::packed]] DSDT {
+    SDTHeader h;
+    unsigned char definition_block[];
+};
 }
 
 }

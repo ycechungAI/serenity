@@ -9,24 +9,24 @@
 #include <AK/Platform.h>
 #include <AK/StringBuilder.h>
 #include <AK/Types.h>
-#include <LibCore/File.h>
 #include <LibCore/MappedFile.h>
 #include <LibCoredump/Backtrace.h>
 #include <LibCoredump/Reader.h>
 #include <LibELF/Core.h>
 #include <LibELF/Image.h>
+#include <LibFileSystem/FileSystem.h>
 
 namespace Coredump {
 
 ELFObjectInfo const* Backtrace::object_info_for_region(Reader const& coredump, MemoryRegionInfo const& region)
 {
-    String path = coredump.resolve_object_path(region.object_name());
+    ByteString path = coredump.resolve_object_path(region.object_name());
 
     auto maybe_ptr = m_debug_info_cache.get(path);
     if (maybe_ptr.has_value())
         return *maybe_ptr;
 
-    if (!Core::File::exists(path))
+    if (!FileSystem::exists(path))
         return nullptr;
 
     auto file_or_error = Core::MappedFile::map(path);
@@ -41,15 +41,20 @@ ELFObjectInfo const* Backtrace::object_info_for_region(Reader const& coredump, M
     return info_ptr;
 }
 
-Backtrace::Backtrace(const Reader& coredump, const ELF::Core::ThreadInfo& thread_info, Function<void(size_t, size_t)> on_progress)
+Backtrace::Backtrace(Reader const& coredump, const ELF::Core::ThreadInfo& thread_info, Function<void(size_t, size_t)> on_progress)
     : m_thread_info(move(thread_info))
 {
-#if ARCH(I386)
-    auto start_bp = m_thread_info.regs.ebp;
-    auto start_ip = m_thread_info.regs.eip;
-#else
+#if ARCH(X86_64)
     auto start_bp = m_thread_info.regs.rbp;
     auto start_ip = m_thread_info.regs.rip;
+#elif ARCH(AARCH64)
+    auto start_bp = m_thread_info.regs.x[29];
+    auto start_ip = m_thread_info.regs.pc;
+#elif ARCH(RISCV64)
+    auto start_bp = m_thread_info.regs.x[7];
+    auto start_ip = m_thread_info.regs.pc;
+#else
+#    error Unknown architecture
 #endif
 
     // In order to provide progress updates, we first have to walk the
@@ -92,7 +97,7 @@ Backtrace::Backtrace(const Reader& coredump, const ELF::Core::ThreadInfo& thread
     }
 }
 
-void Backtrace::add_entry(const Reader& coredump, FlatPtr ip)
+void Backtrace::add_entry(Reader const& coredump, FlatPtr ip)
 {
     auto ip_region = coredump.region_containing(ip);
     if (!ip_region.has_value()) {
@@ -118,20 +123,20 @@ void Backtrace::add_entry(const Reader& coredump, FlatPtr ip)
     }
 
     auto function_name = object_info->debug_info->elf().symbolicate(ip - region->region_start);
-    auto source_position = object_info->debug_info->get_source_position_with_inlines(ip - region->region_start);
+    auto source_position = object_info->debug_info->get_source_position_with_inlines(ip - region->region_start).release_value_but_fixme_should_propagate_errors();
     m_entries.append({ ip, object_name, function_name, source_position });
 }
 
-String Backtrace::Entry::to_string(bool color) const
+ByteString Backtrace::Entry::to_byte_string(bool color) const
 {
     StringBuilder builder;
     builder.appendff("{:p}: ", eip);
     if (object_name.is_empty()) {
-        builder.append("???");
-        return builder.build();
+        builder.append("???"sv);
+        return builder.to_byte_string();
     }
     builder.appendff("[{}] {}", object_name, function_name.is_empty() ? "???" : function_name);
-    builder.append(" (");
+    builder.append(" ("sv);
 
     Vector<Debug::DebugInfo::SourcePosition> source_positions;
 
@@ -146,16 +151,16 @@ String Backtrace::Entry::to_string(bool color) const
 
     for (size_t i = 0; i < source_positions.size(); ++i) {
         auto& position = source_positions[i];
-        auto fmt = color ? "\033[34;1m{}\033[0m:{}" : "{}:{}";
+        auto fmt = color ? "\033[34;1m{}\033[0m:{}"sv : "{}:{}"sv;
         builder.appendff(fmt, LexicalPath::basename(position.file_path), position.line_number);
         if (i != source_positions.size() - 1) {
-            builder.append(" => ");
+            builder.append(" => "sv);
         }
     }
 
-    builder.append(")");
+    builder.append(')');
 
-    return builder.build();
+    return builder.to_byte_string();
 }
 
 }

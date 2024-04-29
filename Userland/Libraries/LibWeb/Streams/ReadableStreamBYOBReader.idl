@@ -1,0 +1,14 @@
+#import <Streams/ReadableStream.idl>
+#import <Streams/ReadableStreamDefaultReader.idl>
+#import <Streams/ReadableStreamGenericReader.idl>
+
+// https://streams.spec.whatwg.org/#readablestreambyobreader
+[Exposed=*]
+interface ReadableStreamBYOBReader {
+    constructor(ReadableStream stream);
+
+    Promise<ReadableStreamReadResult> read(ArrayBufferView view);
+
+    undefined releaseLock();
+};
+ReadableStreamBYOBReader includes ReadableStreamGenericReader;

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Stephan Unverwerth <s.unverwerth@serenityos.org>
+ * Copyright (c) 2023, Jelle Raaijmakers <jelle@gmta.nl>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,6 +8,7 @@
 #pragma once
 
 #include <AK/SIMDExtras.h>
+#include <AK/SIMDMath.h>
 #include <LibGfx/Vector2.h>
 #include <LibGfx/Vector3.h>
 #include <LibGfx/Vector4.h>
@@ -103,6 +105,11 @@ ALWAYS_INLINE static Vector2<AK::SIMD::f32x4> ddy(Vector2<AK::SIMD::f32x4> const
     };
 }
 
+ALWAYS_INLINE static AK::SIMD::f32x4 length(Vector2<AK::SIMD::f32x4> const& v)
+{
+    return AK::SIMD::sqrt(v.dot(v));
+}
+
 // Calculates a quadratic approximation of log2, exploiting the fact that IEEE754 floats are represented as mantissa * 2^exponent.
 // See https://stackoverflow.com/questions/9411823/fast-log2float-x-implementation-c
 ALWAYS_INLINE static AK::SIMD::f32x4 log2_approximate(AK::SIMD::f32x4 v)
@@ -122,6 +129,19 @@ ALWAYS_INLINE static AK::SIMD::f32x4 log2_approximate(AK::SIMD::f32x4 v)
     // Approximate log2 by adding a quadratic function of u to the integral part.
     log += (-0.34484843f * u.float_val + 2.02466578f) * u.float_val - 0.67487759f;
     return log;
+}
+
+ALWAYS_INLINE static Vector2<AK::SIMD::f32x4> to_vec2_f32x4(Vector2<AK::SIMD::i32x4> const& v)
+{
+    return {
+        AK::SIMD::to_f32x4(v.x()),
+        AK::SIMD::to_f32x4(v.y()),
+    };
+}
+
+ALWAYS_INLINE static constexpr Vector4<AK::SIMD::f32x4> to_vec4(AK::SIMD::f32x4 v)
+{
+    return { v, v, v, v };
 }
 
 }

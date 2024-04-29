@@ -26,7 +26,7 @@ struct MemoryRegionInfo {
 
     StringView object_name() const
     {
-        if (region_name.contains("Loader.so"))
+        if (region_name.contains("Loader.so"sv))
             return "Loader.so"sv;
         auto maybe_colon_index = region_name.find(':');
         if (!maybe_colon_index.has_value())
@@ -47,8 +47,8 @@ public:
     void for_each_memory_region_info(Func func) const;
 
     struct LibraryInfo {
-        String name;
-        String path;
+        ByteString name;
+        ByteString path;
         FlatPtr base_address { 0 };
     };
 
@@ -64,32 +64,32 @@ public:
     Optional<MemoryRegionInfo> region_containing(FlatPtr address) const;
 
     struct LibraryData {
-        String name;
+        ByteString name;
         FlatPtr base_address { 0 };
-        NonnullRefPtr<Core::MappedFile> file;
+        NonnullOwnPtr<Core::MappedFile> file;
         ELF::Image lib_elf;
     };
-    const LibraryData* library_containing(FlatPtr address) const;
+    LibraryData const* library_containing(FlatPtr address) const;
 
-    String resolve_object_path(StringView object_name) const;
+    ByteString resolve_object_path(StringView object_name) const;
 
     int process_pid() const;
     u8 process_termination_signal() const;
-    String process_executable_path() const;
-    Vector<String> process_arguments() const;
-    Vector<String> process_environment() const;
-    HashMap<String, String> metadata() const;
+    ByteString process_executable_path() const;
+    Vector<ByteString> process_arguments() const;
+    Vector<ByteString> process_environment() const;
+    HashMap<ByteString, ByteString> metadata() const;
 
 private:
     explicit Reader(ReadonlyBytes);
     explicit Reader(ByteBuffer);
-    explicit Reader(NonnullRefPtr<Core::MappedFile>);
+    explicit Reader(NonnullOwnPtr<Core::MappedFile>);
 
     static Optional<ByteBuffer> decompress_coredump(ReadonlyBytes);
 
     class NotesEntryIterator {
     public:
-        NotesEntryIterator(const u8* notes_data);
+        NotesEntryIterator(u8 const* notes_data);
 
         ELF::Core::NotesEntryHeader::Type type() const;
         const ELF::Core::NotesEntry* current() const;
@@ -99,16 +99,16 @@ private:
 
     private:
         const ELF::Core::NotesEntry* m_current { nullptr };
-        const u8* start { nullptr };
+        u8 const* start { nullptr };
     };
 
     // Private as we don't need anyone poking around in this JsonObject
     // manually - we know very well what should be included and expose that
     // as getters with the appropriate (non-JsonValue) types.
-    const JsonObject process_info() const;
+    JsonObject const process_info() const;
 
     // For uncompressed coredumps, we keep the MappedFile
-    RefPtr<Core::MappedFile> m_mapped_file;
+    OwnPtr<Core::MappedFile> m_mapped_file;
 
     // For compressed coredumps, we decompress them into a ByteBuffer
     ByteBuffer m_coredump_buffer;
@@ -122,7 +122,7 @@ private:
 template<typename Func>
 void Reader::for_each_memory_region_info(Func func) const
 {
-    NotesEntryIterator it(bit_cast<const u8*>(m_coredump_image.program_header(m_notes_segment_index).raw_data()));
+    NotesEntryIterator it(bit_cast<u8 const*>(m_coredump_image.program_header(m_notes_segment_index).raw_data()));
     for (; !it.at_end(); it.next()) {
         if (it.type() != ELF::Core::NotesEntryHeader::Type::MemoryRegionInfo)
             continue;
@@ -133,12 +133,13 @@ void Reader::for_each_memory_region_info(Func func) const
         };
         ByteReader::load(raw_data.data(), raw_memory_region_info);
 
+        auto const* region_name_ptr = bit_cast<char const*>(raw_data.offset_pointer(raw_data.size()));
         MemoryRegionInfo memory_region_info {
             raw_memory_region_info.header,
             raw_memory_region_info.region_start,
             raw_memory_region_info.region_end,
             raw_memory_region_info.program_header_index,
-            { bit_cast<const char*>(raw_data.offset_pointer(raw_data.size())) },
+            { region_name_ptr, strlen(region_name_ptr) },
         };
         IterationDecision decision = func(memory_region_info);
         if (decision == IterationDecision::Break)
@@ -149,12 +150,12 @@ void Reader::for_each_memory_region_info(Func func) const
 template<typename Func>
 void Reader::for_each_thread_info(Func func) const
 {
-    NotesEntryIterator it(bit_cast<const u8*>(m_coredump_image.program_header(m_notes_segment_index).raw_data()));
+    NotesEntryIterator it(bit_cast<u8 const*>(m_coredump_image.program_header(m_notes_segment_index).raw_data()));
     for (; !it.at_end(); it.next()) {
         if (it.type() != ELF::Core::NotesEntryHeader::Type::ThreadInfo)
             continue;
         ELF::Core::ThreadInfo thread_info;
-        ByteReader::load(bit_cast<const u8*>(it.current()), thread_info);
+        ByteReader::load(bit_cast<u8 const*>(it.current()), thread_info);
 
         IterationDecision decision = func(thread_info);
         if (decision == IterationDecision::Break)

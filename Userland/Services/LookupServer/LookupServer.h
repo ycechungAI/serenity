@@ -7,40 +7,41 @@
 #pragma once
 
 #include "ConnectionFromClient.h"
-#include "DNSName.h"
-#include "DNSPacket.h"
 #include "DNSServer.h"
 #include "MulticastDNS.h"
+#include <LibCore/EventReceiver.h>
 #include <LibCore/FileWatcher.h>
-#include <LibCore/Object.h>
+#include <LibDNS/Name.h>
+#include <LibDNS/Packet.h>
 #include <LibIPC/MultiServer.h>
 
 namespace LookupServer {
 
-class DNSAnswer;
+using namespace DNS;
 
-class LookupServer final : public Core::Object {
+class LookupServer final : public Core::EventReceiver {
     C_OBJECT(LookupServer);
 
 public:
     static LookupServer& the();
-    ErrorOr<Vector<DNSAnswer>> lookup(const DNSName& name, DNSRecordType record_type);
+    ErrorOr<Vector<Answer>> lookup(Name const& name, RecordType record_type);
 
 private:
     LookupServer();
 
+    ErrorOr<HashMap<Name, Vector<Answer>, Name::Traits>> try_load_etc_hosts();
     void load_etc_hosts();
-    void put_in_cache(const DNSAnswer&);
+    void put_in_cache(Answer const&);
 
-    ErrorOr<Vector<DNSAnswer>> lookup(const DNSName& hostname, const String& nameserver, bool& did_get_response, DNSRecordType record_type, ShouldRandomizeCase = ShouldRandomizeCase::Yes);
+    ErrorOr<Vector<Answer>> lookup(Name const& hostname, ByteString const& nameserver, bool& did_get_response, RecordType record_type, ShouldRandomizeCase = ShouldRandomizeCase::Yes);
 
     OwnPtr<IPC::MultiServer<ConnectionFromClient>> m_server;
     RefPtr<DNSServer> m_dns_server;
     RefPtr<MulticastDNS> m_mdns;
-    Vector<String> m_nameservers;
+    Vector<ByteString> m_nameservers;
     RefPtr<Core::FileWatcher> m_file_watcher;
-    HashMap<DNSName, Vector<DNSAnswer>, DNSName::Traits> m_etc_hosts;
-    HashMap<DNSName, Vector<DNSAnswer>, DNSName::Traits> m_lookup_cache;
+    HashMap<Name, Vector<Answer>, Name::Traits> m_etc_hosts;
+    HashMap<Name, Vector<Answer>, Name::Traits> m_lookup_cache;
 };
 
 }

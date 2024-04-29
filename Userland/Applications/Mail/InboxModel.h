@@ -11,13 +11,22 @@
 #include <LibIMAP/Objects.h>
 
 struct InboxEntry {
-    String from;
-    String subject;
+    u32 sequence_number;
+    ByteString date;
+    ByteString from;
+    ByteString subject;
+    bool seen;
+};
+
+enum class InboxModelCustomRole {
+    __DONOTUSE = (int)GUI::ModelRole::Custom,
+    Sequence,
 };
 
 class InboxModel final : public GUI::Model {
 public:
     enum Column {
+        Date,
         From,
         Subject,
         __Count
@@ -30,9 +39,11 @@ public:
 
     virtual ~InboxModel() override = default;
 
+    void set_seen(int row, bool);
+
     virtual int row_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override;
     virtual int column_count(const GUI::ModelIndex& = GUI::ModelIndex()) const override { return Column::__Count; }
-    virtual String column_name(int) const override;
+    virtual ErrorOr<String> column_name(int) const override;
     virtual GUI::Variant data(const GUI::ModelIndex&, GUI::ModelRole) const override;
 
 private:

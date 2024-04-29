@@ -14,11 +14,11 @@ namespace JS::Intl {
 
 class SegmentIterator final : public Object {
     JS_OBJECT(SegmentIterator, Object);
+    JS_DECLARE_ALLOCATOR(SegmentIterator);
 
 public:
-    static SegmentIterator* create(GlobalObject&, Segmenter&, Utf16View const&, Segments const&);
+    static NonnullGCPtr<SegmentIterator> create(Realm&, Segmenter&, Utf16View const&, Segments const&);
 
-    SegmentIterator(GlobalObject&, Segmenter&, Utf16View const&, Segments const&);
     virtual ~SegmentIterator() override = default;
 
     Segmenter const& iterating_segmenter() const { return m_iterating_segmenter; }
@@ -29,13 +29,15 @@ public:
     Segments const& segments() { return m_segments; }
 
 private:
+    SegmentIterator(Realm&, Segmenter&, Utf16View const&, Segments const&);
+
     virtual void visit_edges(Cell::Visitor&) override;
 
-    Segmenter& m_iterating_segmenter;                            // [[IteratingSegmenter]]
+    NonnullGCPtr<Segmenter> m_iterating_segmenter;               // [[IteratingSegmenter]]
     Utf16View m_iterated_string;                                 // [[IteratedString]]
     size_t m_iterated_string_next_segment_code_unit_index { 0 }; // [[IteratedStringNextSegmentCodeUnitIndex]]
 
-    Segments const& m_segments;
+    NonnullGCPtr<Segments const> m_segments;
 };
 
 }

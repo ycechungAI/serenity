@@ -22,7 +22,7 @@ With no `file`, or when `file` is `-`, read standard input.
 ## Options
 
 * `-n` `--number=NUM`: Number of lines to print (default 10)
-* `-b` `--bytes=NUM`: Number of bytes to print
+* `-c` `--bytes=NUM`: Number of bytes to print
 * `-q` `--quiet`: Never print filenames
 * `-v` `--verbose`: Always print filenames
 
@@ -39,3 +39,6 @@ Graphical Unix-like operating system for x86 computers.
 
 ```
 
+## See also
+* [`tail`(1)](help://man/1/tail)
+* [`cat`(1)](help://man/1/cat)

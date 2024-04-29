@@ -14,25 +14,23 @@
 namespace Kernel::VirtIO {
 class Console
     : public VirtIO::Device
-    , public RefCounted<Console> {
+    , public AtomicRefCounted<Console> {
     friend VirtIO::ConsolePort;
 
 public:
-    static NonnullRefPtr<Console> must_create(PCI::DeviceIdentifier const&);
+    static NonnullLockRefPtr<Console> must_create_for_pci_instance(PCI::DeviceIdentifier const&);
     virtual ~Console() override = default;
-
-    virtual StringView purpose() const override { return class_name(); }
 
     unsigned device_id() const
     {
         return m_device_id;
     }
 
-    virtual void initialize() override;
+    virtual ErrorOr<void> initialize_virtio_resources() override;
 
 private:
     virtual StringView class_name() const override { return "VirtIOConsole"sv; }
-    explicit Console(PCI::DeviceIdentifier const&);
+    explicit Console(NonnullOwnPtr<TransportEntity>);
     enum class ControlEvent : u16 {
         DeviceReady = 0,
         DeviceAdd = 1,
@@ -61,10 +59,10 @@ private:
     constexpr static size_t CONTROL_MESSAGE_SIZE = sizeof(ControlMessage);
     constexpr static size_t CONTROL_BUFFER_SIZE = CONTROL_MESSAGE_SIZE * 32;
 
-    virtual bool handle_device_config_change() override;
+    virtual ErrorOr<void> handle_device_config_change() override;
     virtual void handle_queue_update(u16 queue_index) override;
 
-    Vector<RefPtr<ConsolePort>> m_ports;
+    Vector<LockRefPtr<ConsolePort>> m_ports;
     void setup_multiport();
     void process_control_message(ControlMessage message);
     void write_control_message(ControlMessage message);

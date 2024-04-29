@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/NonnullOwnPtr.h>
 #include <LibGUI/Command.h>
 #include <LibGUI/UndoStack.h>
 
@@ -28,7 +29,7 @@ void UndoStack::undo()
         return;
 
     auto& command = m_stack[--m_stack_index];
-    command.undo();
+    command->undo();
 
     if (on_state_change)
         on_state_change();
@@ -40,13 +41,13 @@ void UndoStack::redo()
         return;
 
     auto& command = m_stack[m_stack_index++];
-    command.redo();
+    command->redo();
 
     if (on_state_change)
         on_state_change();
 }
 
-void UndoStack::push(NonnullOwnPtr<Command> command)
+ErrorOr<void> UndoStack::try_push(NonnullOwnPtr<Command> command)
 {
     // If the stack cursor is behind the top of the stack, nuke everything from here to the top.
     while (m_stack.size() != m_stack_index)
@@ -56,15 +57,22 @@ void UndoStack::push(NonnullOwnPtr<Command> command)
         m_clean_index = {};
 
     if (!m_stack.is_empty() && is_current_modified()) {
-        if (m_stack.last().merge_with(*command))
-            return;
+        if (m_stack.last()->merge_with(*command))
+            return {};
     }
 
-    m_stack.append(move(command));
+    TRY(m_stack.try_append(move(command)));
     m_stack_index = m_stack.size();
 
     if (on_state_change)
         on_state_change();
+
+    return {};
+}
+
+void UndoStack::push(NonnullOwnPtr<Command> command)
+{
+    MUST(try_push(move(command)));
 }
 
 void UndoStack::set_current_unmodified()
@@ -73,7 +81,7 @@ void UndoStack::set_current_unmodified()
         return;
 
     m_clean_index = m_stack_index;
-    m_last_unmodified_timestamp = Time::now_monotonic();
+    m_last_unmodified_timestamp = MonotonicTime::now();
 
     if (on_state_change)
         on_state_change();
@@ -103,18 +111,18 @@ void UndoStack::clear()
         on_state_change();
 }
 
-Optional<String> UndoStack::undo_action_text() const
+Optional<ByteString> UndoStack::undo_action_text() const
 {
     if (!can_undo())
         return {};
-    return m_stack[m_stack_index - 1].action_text();
+    return m_stack[m_stack_index - 1]->action_text();
 }
 
-Optional<String> UndoStack::redo_action_text() const
+Optional<ByteString> UndoStack::redo_action_text() const
 {
     if (!can_redo())
         return {};
-    return m_stack[m_stack_index].action_text();
+    return m_stack[m_stack_index]->action_text();
 }
 
 }

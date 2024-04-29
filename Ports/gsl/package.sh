@@ -1,10 +1,9 @@
 #!/usr/bin/env -S bash ../.port_include.sh
 
-port="gsl"
-version="2.7"
-useconfigure="true"
-files="https://ftp.gnu.org/gnu/gsl/gsl-${version}.tar.gz gsl-${version}.tar.gz
-https://ftp.gnu.org/gnu/gsl/gsl-${version}.tar.gz.sig gsl-${version}.tar.gz.sig
-https://ftpmirror.gnu.org/gnu/gnu-keyring.gpg gnu-keyring.gpg"
-auth_type=sig
-auth_opts=("--keyring" "./gnu-keyring.gpg" "gsl-${version}.tar.gz.sig")
+port=gsl
+version=2.7.1
+useconfigure=true
+files=(
+    "https://ftpmirror.gnu.org/gnu/gsl/gsl-${version}.tar.gz#dcb0fbd43048832b757ff9942691a8dd70026d5da0ff85601e52687f6deeb34b"
+)
+use_fresh_config_sub=true

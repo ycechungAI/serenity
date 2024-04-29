@@ -13,9 +13,9 @@
 #include <AK/Vector.h>
 
 #ifdef KERNEL
-#    include <Kernel/KString.h>
+#    include <Kernel/Library/KString.h>
 #else
-#    include <AK/String.h>
+#    include <AK/ByteString.h>
 #endif
 
 class [[gnu::packed]] MACAddress {
@@ -36,7 +36,7 @@ public:
 
     constexpr ~MACAddress() = default;
 
-    constexpr const u8& operator[](unsigned i) const
+    constexpr u8 const& operator[](unsigned i) const
     {
         VERIFY(i < s_mac_address_length);
         return m_data[i];
@@ -48,7 +48,7 @@ public:
         return m_data[i];
     }
 
-    constexpr bool operator==(const MACAddress& other) const
+    constexpr bool operator==(MACAddress const& other) const
     {
         for (auto i = 0u; i < m_data.size(); ++i) {
             if (m_data[i] != other.m_data[i]) {
@@ -64,9 +64,9 @@ public:
         return Kernel::KString::formatted("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m_data[0], m_data[1], m_data[2], m_data[3], m_data[4], m_data[5]);
     }
 #else
-    String to_string() const
+    ByteString to_byte_string() const
     {
-        return String::formatted("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m_data[0], m_data[1], m_data[2], m_data[3], m_data[4], m_data[5]);
+        return ByteString::formatted("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m_data[0], m_data[1], m_data[2], m_data[3], m_data[4], m_data[5]);
     }
 #endif
 
@@ -75,7 +75,7 @@ public:
         if (string.is_null())
             return {};
 
-        const auto parts = string.split_view(":");
+        auto const parts = string.split_view(':');
         if (parts.size() != 6)
             return {};
 
@@ -94,7 +94,7 @@ public:
 
     constexpr bool is_zero() const
     {
-        return all_of(m_data, [](const auto octet) { return octet == 0; });
+        return all_of(m_data, [](auto const octet) { return octet == 0; });
     }
 
     void copy_to(Bytes destination) const
@@ -111,8 +111,8 @@ static_assert(sizeof(MACAddress) == 6u);
 namespace AK {
 
 template<>
-struct Traits<MACAddress> : public GenericTraits<MACAddress> {
-    static unsigned hash(const MACAddress& address) { return string_hash((const char*)&address, sizeof(address)); }
+struct Traits<MACAddress> : public DefaultTraits<MACAddress> {
+    static unsigned hash(MACAddress const& address) { return string_hash((char const*)&address, sizeof(address)); }
 };
 
 }

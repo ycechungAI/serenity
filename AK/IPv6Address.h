@@ -14,7 +14,7 @@
 
 #ifdef KERNEL
 #    include <AK/Error.h>
-#    include <Kernel/KString.h>
+#    include <Kernel/Library/KString.h>
 #else
 #    include <AK/String.h>
 #endif
@@ -51,23 +51,22 @@ public:
 #ifdef KERNEL
     ErrorOr<NonnullOwnPtr<Kernel::KString>> to_string() const
 #else
-    String to_string() const
+    ErrorOr<String> to_string() const
 #endif
     {
         if (is_zero()) {
 #ifdef KERNEL
-            return KString::try_create("::"sv);
+            return Kernel::KString::try_create("::"sv);
 #else
-            return "::"sv;
+            return "::"_string;
 #endif
         }
 
-        // TODO: Error propagation
         StringBuilder builder;
 
         if (is_ipv4_mapped()) {
 #ifdef KERNEL
-            return KString::formatted("::ffff:{}.{}.{}.{}", m_data[12], m_data[13], m_data[14], m_data[15]);
+            return Kernel::KString::formatted("::ffff:{}.{}.{}.{}", m_data[12], m_data[13], m_data[14], m_data[15]);
 #else
             return String::formatted("::ffff:{}.{}.{}.{}", m_data[12], m_data[13], m_data[14], m_data[15]);
 #endif
@@ -99,24 +98,24 @@ public:
         for (int i = 0; i < 8;) {
             if (longest_zero_span_start.has_value() && longest_zero_span_start.value() == i) {
                 if (longest_zero_span_start.value() + zero_span_length >= 8)
-                    builder.append("::"sv);
+                    TRY(builder.try_append("::"sv));
                 else
-                    builder.append(':');
+                    TRY(builder.try_append(':'));
                 i += zero_span_length;
                 continue;
             }
 
             if (i == 0)
-                builder.appendff("{:x}", group(i));
+                TRY(builder.try_appendff("{:x}", group(i)));
             else
-                builder.appendff(":{:x}", group(i));
+                TRY(builder.try_appendff(":{:x}", group(i)));
 
             i++;
         }
 #ifdef KERNEL
-        return KString::try_create(builder.string_view());
+        return Kernel::KString::try_create(builder.string_view());
 #else
-        return builder.string_view();
+        return builder.to_string();
 #endif
     }
 
@@ -125,7 +124,7 @@ public:
         if (string.is_null())
             return {};
 
-        auto const parts = string.split_view(':', true);
+        auto const parts = string.split_view(':', SplitBehavior::KeepEmpty);
         if (parts.is_empty())
             return {};
         if (parts.size() > 9) {
@@ -251,6 +250,12 @@ public:
         return {};
     }
 
+    // https://datatracker.ietf.org/doc/html/rfc4291#section-2.5.3
+    [[nodiscard]] static IPv6Address loopback()
+    {
+        return IPv6Address({ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 });
+    }
+
 private:
     constexpr u16 group(unsigned i) const
     {
@@ -264,39 +269,31 @@ private:
 static_assert(sizeof(IPv6Address) == 16);
 
 template<>
-struct Traits<IPv6Address> : public GenericTraits<IPv6Address> {
-    static constexpr unsigned hash(IPv6Address const& address)
-    {
-        unsigned h = 0;
-        for (int group = 0; group < 8; group += 2) {
-            u32 two_groups = ((u32)address[group] << 16) | (u32)address[group + 1];
-            if (group == 0)
-                h = int_hash(two_groups);
-            else
-                h = pair_int_hash(h, two_groups);
-        }
-        return h;
-    }
+struct Traits<IPv6Address> : public DefaultTraits<IPv6Address> {
+    // SipHash-4-8 is considered conservatively secure, even if not cryptographically secure.
+    static unsigned hash(IPv6Address const& address) { return sip_hash_bytes<4, 8>({ &address.to_in6_addr_t(), sizeof(address.to_in6_addr_t()) }); }
 };
 
 #ifdef KERNEL
 template<>
-struct Formatter<IPv6Address> : Formatter<ErrorOr<NonnullOwnPtr<Kernel::KString>>> {
+struct Formatter<IPv6Address> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder& builder, IPv6Address const& value)
     {
-        return Formatter<ErrorOr<NonnullOwnPtr<Kernel::KString>>>::format(builder, value.to_string());
+        return Formatter<StringView>::format(builder, TRY(value.to_string())->view());
     }
 };
 #else
 template<>
-struct Formatter<IPv6Address> : Formatter<String> {
+struct Formatter<IPv6Address> : Formatter<StringView> {
     ErrorOr<void> format(FormatBuilder& builder, IPv6Address const& value)
     {
-        return Formatter<String>::format(builder, value.to_string());
+        return Formatter<StringView>::format(builder, TRY(value.to_string()));
     }
 };
 #endif
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::IPv6Address;
+#endif

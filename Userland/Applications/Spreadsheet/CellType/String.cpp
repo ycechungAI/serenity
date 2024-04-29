@@ -11,29 +11,31 @@
 namespace Spreadsheet {
 
 StringCell::StringCell()
-    : CellType("String")
+    : CellType("String"sv)
 {
 }
 
-JS::ThrowCompletionOr<String> StringCell::display(Cell& cell, const CellTypeMetadata& metadata) const
+JS::ThrowCompletionOr<ByteString> StringCell::display(Cell& cell, CellTypeMetadata const& metadata) const
 {
-    auto string = TRY(cell.js_data().to_string(cell.sheet().global_object()));
+    auto& vm = cell.sheet().global_object().vm();
+    auto string = TRY(cell.js_data().to_byte_string(vm));
     if (metadata.length >= 0)
         return string.substring(0, metadata.length);
 
     return string;
 }
 
-JS::ThrowCompletionOr<JS::Value> StringCell::js_value(Cell& cell, const CellTypeMetadata& metadata) const
+JS::ThrowCompletionOr<JS::Value> StringCell::js_value(Cell& cell, CellTypeMetadata const& metadata) const
 {
+    auto& vm = cell.sheet().vm();
     auto string = TRY(display(cell, metadata));
-    return JS::js_string(cell.sheet().interpreter().heap(), string);
+    return JS::PrimitiveString::create(vm, string);
 }
 
 String StringCell::metadata_hint(MetadataName metadata) const
 {
     if (metadata == MetadataName::Format)
-        return "Ignored";
+        return "Ignored"_string;
     return {};
 }
 

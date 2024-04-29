@@ -4,10 +4,16 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/StringBuilder.h>
+#include <LibJS/Heap/MarkedVector.h>
 #include <LibJS/Runtime/Completion.h>
+#include <LibJS/Runtime/Realm.h>
+#include <LibJS/Runtime/VM.h>
 #include <LibWeb/HTML/WorkerDebugConsoleClient.h>
 
 namespace Web::HTML {
+
+JS_DEFINE_ALLOCATOR(WorkerDebugConsoleClient);
 
 WorkerDebugConsoleClient::WorkerDebugConsoleClient(JS::Console& console)
     : ConsoleClient(console)
@@ -30,7 +36,9 @@ void WorkerDebugConsoleClient::end_group()
 // 2.3. Printer(logLevel, args[, options]), https://console.spec.whatwg.org/#printer
 JS::ThrowCompletionOr<JS::Value> WorkerDebugConsoleClient::printer(JS::Console::LogLevel log_level, PrinterArguments arguments)
 {
-    String indent = String::repeated("  ", m_group_stack_depth);
+    auto& vm = m_console->realm().vm();
+
+    auto indent = TRY_OR_THROW_OOM(vm, String::repeated(' ', m_group_stack_depth * 2));
 
     if (log_level == JS::Console::LogLevel::Trace) {
         auto trace = arguments.get<JS::Console::Trace>();
@@ -52,8 +60,8 @@ JS::ThrowCompletionOr<JS::Value> WorkerDebugConsoleClient::printer(JS::Console::
         return JS::js_undefined();
     }
 
-    auto output = String::join(" ", arguments.get<Vector<JS::Value>>());
-    m_console.output_debug_message(log_level, output);
+    auto output = TRY(generically_format_values(arguments.get<JS::MarkedVector<JS::Value>>()));
+    m_console->output_debug_message(log_level, output);
 
     switch (log_level) {
     case JS::Console::LogLevel::Debug:

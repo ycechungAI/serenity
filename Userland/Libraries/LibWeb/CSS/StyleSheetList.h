@@ -1,47 +1,42 @@
 /*
- * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Luke Wilde <lukew@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/NonnullRefPtrVector.h>
-#include <AK/RefCounted.h>
-#include <LibWeb/Bindings/Wrappable.h>
+#include <LibWeb/Bindings/PlatformObject.h>
 #include <LibWeb/CSS/CSSStyleSheet.h>
-#include <LibWeb/Forward.h>
 
 namespace Web::CSS {
 
-class StyleSheetList
-    : public RefCounted<StyleSheetList>
-    , public Weakable<StyleSheetList>
-    , public Bindings::Wrappable {
+class StyleSheetList final : public Bindings::PlatformObject {
+    WEB_PLATFORM_OBJECT(StyleSheetList, Bindings::PlatformObject);
+    JS_DECLARE_ALLOCATOR(StyleSheetList);
+
 public:
-    using WrapperType = Bindings::StyleSheetListWrapper;
+    [[nodiscard]] static JS::NonnullGCPtr<StyleSheetList> create(DOM::Document&);
 
-    static NonnullRefPtr<StyleSheetList> create(DOM::Document& document)
-    {
-        return adopt_ref(*new StyleSheetList(document));
-    }
+    void add_a_css_style_sheet(CSS::CSSStyleSheet&);
+    void remove_a_css_style_sheet(CSS::CSSStyleSheet&);
+    void create_a_css_style_sheet(String type, DOM::Element* owner_node, String media, String title, bool alternate, bool origin_clean, Optional<String> location, CSS::CSSStyleSheet* parent_style_sheet, CSS::CSSRule* owner_rule, CSS::CSSStyleSheet&);
 
-    void add_sheet(NonnullRefPtr<CSSStyleSheet>);
-    void remove_sheet(CSSStyleSheet&);
+    Vector<JS::NonnullGCPtr<CSSStyleSheet>> const& sheets() const { return m_sheets; }
+    Vector<JS::NonnullGCPtr<CSSStyleSheet>>& sheets() { return m_sheets; }
 
-    NonnullRefPtrVector<CSSStyleSheet> const& sheets() const { return m_sheets; }
-    NonnullRefPtrVector<CSSStyleSheet>& sheets() { return m_sheets; }
-
-    RefPtr<CSSStyleSheet> item(size_t index) const
+    CSSStyleSheet* item(size_t index) const
     {
         if (index >= m_sheets.size())
             return {};
-        return m_sheets[index];
+        return const_cast<CSSStyleSheet*>(m_sheets[index].ptr());
     }
 
     size_t length() const { return m_sheets.size(); }
 
-    bool is_supported_property_index(u32) const;
+    virtual bool is_supported_property_index(u32 index) const override;
+    virtual WebIDL::ExceptionOr<JS::Value> item_value(size_t index) const override;
 
     DOM::Document& document() { return m_document; }
     DOM::Document const& document() const { return m_document; }
@@ -49,16 +44,19 @@ public:
 private:
     explicit StyleSheetList(DOM::Document&);
 
-    DOM::Document& m_document;
-    NonnullRefPtrVector<CSSStyleSheet> m_sheets;
+    virtual void initialize(JS::Realm&) override;
+    virtual void visit_edges(Cell::Visitor&) override;
 
-    int m_generation { 0 };
+    void add_sheet(CSSStyleSheet&);
+    void remove_sheet(CSSStyleSheet&);
+
+    JS::NonnullGCPtr<DOM::Document> m_document;
+    Vector<JS::NonnullGCPtr<CSSStyleSheet>> m_sheets;
+
+    // https://www.w3.org/TR/cssom/#preferred-css-style-sheet-set-name
+    String m_preferred_css_style_sheet_set_name;
+    // https://www.w3.org/TR/cssom/#last-css-style-sheet-set-name
+    Optional<String> m_last_css_style_sheet_set_name;
 };
-
-}
-
-namespace Web::Bindings {
-
-StyleSheetListWrapper* wrap(JS::GlobalObject&, CSS::StyleSheetList&);
 
 }

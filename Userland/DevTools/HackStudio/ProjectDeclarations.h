@@ -1,15 +1,17 @@
 /*
  * Copyright (c) 2021, Itamar S. <itamar8910@gmail.com>
+ * Copyright (c) 2024, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include "DeclarationsModel.h"
+#include <AK/ByteString.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
 #include <AK/Noncopyable.h>
-#include <AK/String.h>
 #include <LibGUI/AutocompleteProvider.h>
 #include <LibGUI/Icon.h>
 
@@ -23,15 +25,20 @@ public:
     template<typename Func>
     void for_each_declared_symbol(Func);
 
-    void set_declared_symbols(const String& filename, const Vector<GUI::AutocompleteProvider::Declaration>&);
+    void set_declared_symbols(ByteString const& filename, Vector<CodeComprehension::Declaration> const&);
 
-    static Optional<GUI::Icon> get_icon_for(GUI::AutocompleteProvider::DeclarationType);
+    DeclarationsModel& declarations_model() { return m_declarations_model; }
+    void update_declarations_model();
+
+    static Optional<GUI::Icon> get_icon_for(CodeComprehension::DeclarationType);
 
     Function<void()> on_update = nullptr;
 
 private:
-    ProjectDeclarations() = default;
-    HashMap<String, Vector<GUI::AutocompleteProvider::Declaration>> m_document_to_declarations;
+    ProjectDeclarations();
+
+    HashMap<ByteString, Vector<CodeComprehension::Declaration>> m_document_to_declarations;
+    NonnullRefPtr<DeclarationsModel> m_declarations_model;
 };
 
 template<typename Func>

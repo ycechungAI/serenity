@@ -1,27 +1,59 @@
 # Visual Studio Code Project Configuration
 
-Visual Studio Code does not work optimally for Serenity development, and there's a bunch of configuring and fiddling around you'll have to do.
+Visual Studio Code requires some configuration files, and a tailored ``settings.json`` file to understand serenity.
 
-The WSL Remote extension allows you to use VSCode in Windows while using the normal WSL workflow. This works surprisingly well, but for code comprehension speed you should put the Serenity directory on your WSL root partition.
+The WSL Remote extension allows you to use VS Code in Windows while using the normal WSL workflow. This works well, but for code comprehension speed you should put the Serenity directory on your WSL root partition.
+
+The recommended extensions for VS Code include:
+
+- [clangd](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.vscode-clangd)
+- [GitLens](https://marketplace.visualstudio.com/items?itemName=eamodio.gitlens)
 
 ## Code comprehension
 
-Both C++ comprehension tools listed below report fake errors.
+Clangd has the best support for cross-compiling workflows, especially if configured as noted below. The Microsoft C/C++ tools can work, but require a lot more configuration and may not understand the sysroot in use.
 
 ### clangd
 
-The official clangd extension can be used for C++ comprehension. You'll have to use the following .clangd:
+The official clangd extension can be used for C++ comprehension. It is recommended in general, as it is most likely to work on all platforms.
+
+clangd uses ``compile_commands.json`` files to understand the project. CMake will generate these in either Build/x86_64, Build/x86_64clang, and Build/lagom.
+Depending on which configuration you use most, set the CompilationDatabase configuration item in the below ``.clangd`` file accordingly. It goes at the root of your checkout (``serenity/.clangd``):
 
 ```yaml
 CompileFlags:
-  CompilationDatabase: Build/i686
+  Add: [-D__serenity__]
+  CompilationDatabase: Build/x86_64
+  
+Diagnostics:
+  UnusedIncludes: None
+  MissingIncludes: None
 ```
 
-Run cmake at least once for this to work. clangd has difficulty finding specific methods and types, especially with inheritance trees. Also, include errors are wrong in 90% of cases.
+The UnusedIncludes and MissingIncludes flags are used to disable the [Include Cleaner](https://clangd.llvm.org/design/include-cleaner) feature of newer clangd releases.
+It can be re-enabled if you don't mind the noisy inlay hints and problems in the problem view.
+
+Run ``./Meta/serenity.sh run`` at least once to generate the ``compile_commands.json`` file.
+
+In addition to the ``.clangd`` file, the ``settings.json`` file below has a required ``clangd.arguments`` entry for ``--query-driver`` that allows clangd to find the cross-compiler's built-in include paths.
+
+#### Known issues
+
+- Some distribution clangd packages still have issues identifying paths to the serenity cross-compilers' builtin include paths after supplying the ``--query-driver`` option from ``settings.json``. This has been seen on at least Debian. If the inlay hints suggest that ``<new>`` cannot be found, first triple check your configuration matches the ``.clangd`` file from this section, verify that you've run the OS via ``Meta/serenity.sh run``, and quadruple check your ``clangd.arguments`` section in the project-local ``settings.json`` file. If all of the above are correct, building ``clangd`` from the serenity clang toolchain is known to work. See [AdvancedBuildInstructions](AdvancedBuildInstructions.md#serenity-aware-clang-tools) for steps on how to build it from source. After building from source, be sure to set ``clangd.path`` in your ``settings.json`` to ``${workspaceFolder}/Toolchain/Local/clang/bin/clangd``.
+
+- clangd has a tendency to crash when stressing bleeding edge compiler features. You can usually just restart it via the command palette. If that doesn't help, close currently open C++ files and/or switch branches before restarting, which helps sometimes.
+
+### DSL syntax highlighting
+
+There's a syntax highlighter extension for SerenityOS DSLs called "SerenityOS DSL Syntax Highlight", available [here](https://marketplace.visualstudio.com/items?itemName=kleinesfilmroellchen.serenity-dsl-syntaxhighlight) or [here](https://open-vsx.org/extension/kleinesfilmroellchen/serenity-dsl-syntaxhighlight).
+The extension provides syntax highlighting for LibIPC's IPC files, LibGUI's GUI Markup Language (GML), [Web IDL](https://webidl.spec.whatwg.org/), and LibJS's
+serialization format (no extension) as output by js with the -d option.
 
 ### Microsoft C/C++ tools
 
-These extensions can be used as-is, but you need to point them to the custom Serenity compilers. Use the following cpp-preferences to circumvent some errors:
+This extension can be used as-is, but you need to point it to the custom Serenity compilers. Note that enabling the extension in the same workspace as the
+clangd and clang-format extensions will cause conflicts. If you choose to use Microsoft C/C++ Tools rather than clangd and clang-format, use the
+following ``c_cpp_properties.json`` to circumvent some errors. Even with the configuration in place, the extension will likely still report errors related to types and methods not being found.
 
 <details>
 <summary>.vscode/c_cpp_properties.json</summary>
@@ -30,56 +62,52 @@ These extensions can be used as-is, but you need to point them to the custom Ser
 {
     "configurations": [
         {
-            "name": "userland-i386-gcc",
+            "name": "userland-x86_64-gcc",
             "includePath": [
                 "${workspaceFolder}",
-                "${workspaceFolder}/Build/i686/",
-                "${workspaceFolder}/Build/i686/Userland",
-                "${workspaceFolder}/Build/i686/Userland/Applications",
-                "${workspaceFolder}/Build/i686/Userland/Libraries",
-                "${workspaceFolder}/Build/i686/Userland/Services",
-                "${workspaceFolder}/Build/i686/Root/usr/include/**",
+                "${workspaceFolder}/Build/x86_64/",
+                "${workspaceFolder}/Build/x86_64/Userland",
+                "${workspaceFolder}/Build/x86_64/Userland/Applications",
+                "${workspaceFolder}/Build/x86_64/Userland/Libraries",
+                "${workspaceFolder}/Build/x86_64/Userland/Services",
+                "${workspaceFolder}/Build/x86_64/Root/usr/include/**",
                 "${workspaceFolder}/Userland",
                 "${workspaceFolder}/Userland/Libraries",
                 "${workspaceFolder}/Userland/Libraries/LibC",
-                "${workspaceFolder}/Userland/Libraries/LibM",
-                "${workspaceFolder}/Userland/Libraries/LibPthread",
                 "${workspaceFolder}/Userland/Services",
-                "${workspaceFolder}/Toolchain/Local/i686/i686-pc-serenity/include/c++/**"
+                "${workspaceFolder}/Toolchain/Local/x86_64/x86_64-pc-serenity/include/c++/**"
             ],
             "defines": [
                 "DEBUG",
                 "__serenity__"
             ],
-            "compilerPath": "${workspaceFolder}/Toolchain/Local/i686/bin/i686-pc-serenity-g++",
+            "compilerPath": "${workspaceFolder}/Toolchain/Local/x86_64/bin/x86_64-pc-serenity-g++",
             "cStandard": "c17",
             "cppStandard": "c++20",
             "intelliSenseMode": "linux-gcc-x86",
-            "compileCommands": "Build/i686/compile_commands.json",
+            "compileCommands": "Build/x86_64/compile_commands.json",
             "compilerArgs": [
-                "-wall",
-                "-wextra",
-                "-werror"
+                "-Wall",
+                "-Wextra",
+                "-Werror"
             ],
             "browse": {
                 "path": [
                     "${workspaceFolder}",
-                    "${workspaceFolder}/Build/i686/",
-                    "${workspaceFolder}/Build/i686/Userland",
-                    "${workspaceFolder}/Build/i686/Userland/Applications",
-                    "${workspaceFolder}/Build/i686/Userland/Libraries",
-                    "${workspaceFolder}/Build/i686/Userland/Services",
-                    "${workspaceFolder}/Build/i686/Root/usr/include/**",
+                    "${workspaceFolder}/Build/x86_64/",
+                    "${workspaceFolder}/Build/x86_64/Userland",
+                    "${workspaceFolder}/Build/x86_64/Userland/Applications",
+                    "${workspaceFolder}/Build/x86_64/Userland/Libraries",
+                    "${workspaceFolder}/Build/x86_64/Userland/Services",
+                    "${workspaceFolder}/Build/x86_64/Root/usr/include/**",
                     "${workspaceFolder}/Userland",
                     "${workspaceFolder}/Userland/Libraries",
                     "${workspaceFolder}/Userland/Libraries/LibC",
-                    "${workspaceFolder}/Userland/Libraries/LibM",
-                    "${workspaceFolder}/Userland/Libraries/LibPthread",
                     "${workspaceFolder}/Userland/Services",
-                    "${workspaceFolder}/Toolchain/Local/i686/i686-pc-serenity/include/c++/**"
+                    "${workspaceFolder}/Toolchain/Local/x86_64/x86_64-pc-serenity/include/c++/**"
                 ],
                 "limitSymbolsToIncludedHeaders": true,
-                "databaseFilename": "${workspaceFolder}/Build/i686/"
+                "databaseFilename": "${workspaceFolder}/Build/x86_64/"
             }
         }
     ],
@@ -88,15 +116,9 @@ These extensions can be used as-is, but you need to point them to the custom Ser
 ```
 </details>
 
-Most nonsensical errors from the extension also involve not finding methods, types etc.
-
-### DSL syntax highlighting
-
-There's a syntax highlighter extension for both IPC and GML called "SerenityOS DSL Syntax Highlight", available [here](https://marketplace.visualstudio.com/items?itemName=kleinesfilmroellchen.serenity-dsl-syntaxhighlight) or [here](https://open-vsx.org/extension/kleinesfilmroellchen/serenity-dsl-syntaxhighlight).
-
 ## Formatting
 
-clang-format is included with the Microsoft tools (see above). The settings below include a key that makes it use the proper style. Alternatively, you can use the clang-format extension itself, which should work out of the box.
+clangd provides code formatting out of the box using the ``clang-format`` engine. ``clang-format`` support is also included with the Microsoft C/C++ tools (see above). The settings below include a key that makes the Microsoft extension use the proper style.
 
 ## Settings
 
@@ -121,7 +143,7 @@ These belong in the `.vscode/settings.json` of Serenity.
         "Build/**": true,
         "build/**": true,
     },
-    // Force clang-format to respect Serenity's .clang-format style file.
+    // Force clang-format to respect Serenity's .clang-format style file. This is not necessary if you're not using the Microsoft C++ extension.
     "C_Cpp.clang_format_style": "file",
     // Tab settings
     "editor.tabSize": 4,
@@ -131,7 +153,12 @@ These belong in the `.vscode/settings.json` of Serenity.
     "files.insertFinalNewline": true,
     // git commit message length
     "git.inputValidationLength": 72,
-    "git.inputValidationSubjectLength": 72
+    "git.inputValidationSubjectLength": 72,
+    // Tell clangd to ask the cross-compilers for their builtin include paths
+    "clangd.arguments": [
+        "--query-driver=${workspaceFolder}/Toolchain/Local/**/*",
+        "--header-insertion=never" // See https://github.com/clangd/clangd/issues/1247
+    ]
 }
 ```
 
@@ -145,7 +172,7 @@ The following three example tasks should suffice in most situations, and allow y
 Note: The Assertion und KUBSan Problem matchers will only run after you have closed qemu.
 
 <details>
-<summary>tasks.json</summary>
+<summary>.vscode/tasks.json</summary>
 
 ```json
 {
@@ -315,9 +342,8 @@ Note: The Assertion und KUBSan Problem matchers will only run after you have clo
             "id": "arch",
             "description": "Architecture to compile for",
             "type": "pickString",
-            "default": "i686",
+            "default": "x86_64",
             "options": [
-                "i686",
                 "x86_64",
                 "aarch64"
             ]

@@ -28,9 +28,9 @@ List of options:
    during the boot sequence. Leaving only the AHCI and Ram Disk controllers.
 
 * **`disable_physical_storage`** - If present on the command line, neither AHCI, or IDE controllers will be initialized on boot.
-  
-* **`disable_ps2_controller`** - If present on the command line, the I8042 keyboard controller will not be initialized on boot.
-  
+
+* **`disable_ps2_mouse`** - If present on the command line, no PS2 mouse will be attached.
+    
 * **`disable_uhci_controller`** - If present on the command line, the UHCI controller will not be initialized on boot.
 
 * **`disable_virtio`** - If present on the command line, virtio devices will not be detected, and initialized on boot.
@@ -47,7 +47,8 @@ List of options:
   but only if **`acpi`** is set to **`limited`** or **`on`**, and a `MADT` (APIC) table is available.
   Otherwise, the kernel will fallback to use the i8259 PICs.
 
-* **`fbdev`** - This parameter expects one of the following values. **`on`**- Boot into the graphical environment (default). **`off`** - Boot into text mode. **`bootloader`** - Boot into the graphical environment, but only use the frame buffer set up by the bootloader and do not initialize any other graphics cards.
+* **`graphics_subsystem_mode`** - This parameter expects one of the following values. **`on`**- Boot into the graphical environment if possible (default). **`off`** - Boot into text mode, don't initialize any driver. **`limited`** - Boot into the pre-defined framebuffer that the bootloader
+has set up before booting the Kernel, don't initialize any driver.
 
 * **`force_pio`** - If present on the command line, the IDE controllers will be force into PIO mode when initialized IDE Channels on boot.
 
@@ -59,6 +60,16 @@ List of options:
 
 * **`init_args`** - This parameter expects a set of arguments to pass to the **`init`** program.
   The value should be a set of strings separated by `,` characters.
+
+* **`i8042_presence_mode`** - This parameter expects one of the following values:
+  **`aggressive-test`** - The i8042 initialization sequence should only try an aggressive presence test.
+  **`auto`** - The i8042 initialization sequence should try to check if ACPI says i8042 exists, and if not an aggressive presence test should take place to determine presence. 
+  **`none`** - Assume there's no i8042 controller in the system. 
+  **`force`** - Assume there's i8042 controller in the system.
+
+* **`i8042_first_port_translation`**  - This parameter expects **`on`** or **`off`** and is by default set to **`off`**.
+  When set to **`off`**, the kernel will not enable first PS2 port translation.
+  When set to **`on`**, the kernel will enable first PS2 port translation.
 
 * **`panic`** - This parameter expects **`halt`** or **`shutdown`**. This is particularly useful in CI contexts.
 
@@ -77,10 +88,10 @@ List of options:
 
 * **`nvme_poll`** - This parameter configures the NVMe drive to use polling instead of interrupt driven completion.
 
-* **`system_mode`** - This parameter is not interpreted by the Kernel, and is made available at `/proc/system_mode`. SystemServer uses it to select the set of services that should be started. Common values are:
+* **`system_mode`** - This parameter is not interpreted by the Kernel, and is made available at `/sys/kernel/system_mode`. SystemServer uses it to select the set of services that should be started. Common values are:
   - **`graphical`** (default) - Boots the system in the normal graphical mode.
   - **`self-test`** - Boots the system in self-test, validation mode.
-  - **`text`** - Boots the system in text only mode. (You may need to also set **`fbdev=off`**.)
+  - **`text`** - Boots the system in text only mode. (You may need to also set **`graphics_subsystem_mode=off`**.)
 
 * **`time`** - This parameter expects one of the following values. **`modern`** - This configures the system to attempt
   to use High Precision Event Timer (HPET) on boot. **`legacy`** - Configures the system to use the legacy programmable interrupt

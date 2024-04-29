@@ -1,16 +1,17 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=ca-certificates
-version=2022-02-01
-files="https://curl.se/ca/cacert-${version}.pem cacert-${version}.pem 1d9195b76d2ea25c2b5ae9bee52d05075244d78fcd9c58ee0b6fac47d395a5eb"
-auth_type=sha256
-workdir="."
+port='ca-certificates'
+version='2023-12-12'
+files=(
+    "https://curl.se/ca/cacert-${version}.pem#ccbdfc2fe1a0d7bbbb9cc15710271acf1bb1afe4c8f1725fe95c4c7733fcbe5a"
+)
+workdir='.'
 
 configure() {
-    return
+    :
 }
 
 build() {
-    return
+    :
 }
 
 install() {

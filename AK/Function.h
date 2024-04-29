@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2016 Apple Inc. All rights reserved.
  * Copyright (c) 2021, Gunnar Beutner <gbeutner@serenityos.org>
+ * Copyright (c) 2018-2023, Andreas Kling <kling@serenityos.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,10 +32,21 @@
 #include <AK/BitCast.h>
 #include <AK/Noncopyable.h>
 #include <AK/ScopeGuard.h>
+#include <AK/Span.h>
 #include <AK/StdLibExtras.h>
 #include <AK/Types.h>
 
 namespace AK {
+
+// These annotations are used to avoid capturing a variable with local storage in a lambda that outlives it
+#if defined(AK_COMPILER_CLANG)
+#    define NOESCAPE [[clang::annotate("serenity::noescape")]]
+// FIXME: When we get C++23, change this to be applied to the lambda directly instead of to the types of its captures
+#    define IGNORE_USE_IN_ESCAPING_LAMBDA [[clang::annotate("serenity::ignore_use_in_escaping_lambda")]]
+#else
+#    define NOESCAPE
+#    define IGNORE_USE_IN_ESCAPING_LAMBDA
+#endif
 
 template<typename>
 class Function;
@@ -51,8 +63,19 @@ class Function<Out(In...)> {
     AK_MAKE_NONCOPYABLE(Function);
 
 public:
+    using FunctionType = Out(In...);
+    using ReturnType = Out;
+
+#ifdef KERNEL
+    constexpr static auto AccommodateExcessiveAlignmentRequirements = false;
+    constexpr static size_t ExcessiveAlignmentThreshold = alignof(void*);
+#else
+    constexpr static auto AccommodateExcessiveAlignmentRequirements = true;
+    constexpr static size_t ExcessiveAlignmentThreshold = 16;
+#endif
+
     Function() = default;
-    Function(std::nullptr_t)
+    Function(nullptr_t)
     {
     }
 
@@ -61,16 +84,27 @@ public:
         clear(false);
     }
 
-    template<typename CallableType>
-    Function(CallableType&& callable) requires((IsFunctionObject<CallableType> && IsCallableWithArguments<CallableType, In...> && !IsSame<RemoveCVReference<CallableType>, Function>))
+    [[nodiscard]] ReadonlyBytes raw_capture_range() const
     {
-        init_with_callable(forward<CallableType>(callable));
+        if (!m_size)
+            return {};
+        if (auto* wrapper = callable_wrapper())
+            return ReadonlyBytes { wrapper, m_size };
+        return {};
+    }
+
+    template<typename CallableType>
+    Function(CallableType&& callable)
+    requires((IsFunctionObject<CallableType> && IsCallableWithArguments<CallableType, Out, In...> && !IsSame<RemoveCVReference<CallableType>, Function>))
+    {
+        init_with_callable(forward<CallableType>(callable), CallableKind::FunctionObject);
     }
 
     template<typename FunctionType>
-    Function(FunctionType f) requires((IsFunctionPointer<FunctionType> && IsCallableWithArguments<RemovePointer<FunctionType>, In...> && !IsSame<RemoveCVReference<FunctionType>, Function>))
+    Function(FunctionType f)
+    requires((IsFunctionPointer<FunctionType> && IsCallableWithArguments<RemovePointer<FunctionType>, Out, In...> && !IsSame<RemoveCVReference<FunctionType>, Function>))
     {
-        init_with_callable(move(f));
+        init_with_callable(move(f), CallableKind::FunctionPointer);
     }
 
     Function(Function&& other)
@@ -94,23 +128,25 @@ public:
     explicit operator bool() const { return !!callable_wrapper(); }
 
     template<typename CallableType>
-    Function& operator=(CallableType&& callable) requires((IsFunctionObject<CallableType> && IsCallableWithArguments<CallableType, In...>))
+    Function& operator=(CallableType&& callable)
+    requires((IsFunctionObject<CallableType> && IsCallableWithArguments<CallableType, Out, In...>))
     {
         clear();
-        init_with_callable(forward<CallableType>(callable));
+        init_with_callable(forward<CallableType>(callable), CallableKind::FunctionObject);
         return *this;
     }
 
     template<typename FunctionType>
-    Function& operator=(FunctionType f) requires((IsFunctionPointer<FunctionType> && IsCallableWithArguments<RemovePointer<FunctionType>, In...>))
+    Function& operator=(FunctionType f)
+    requires((IsFunctionPointer<FunctionType> && IsCallableWithArguments<RemovePointer<FunctionType>, Out, In...>))
     {
         clear();
         if (f)
-            init_with_callable(move(f));
+            init_with_callable(move(f), CallableKind::FunctionPointer);
         return *this;
     }
 
-    Function& operator=(std::nullptr_t)
+    Function& operator=(nullptr_t)
     {
         clear();
         return *this;
@@ -126,6 +162,11 @@ public:
     }
 
 private:
+    enum class CallableKind {
+        FunctionPointer,
+        FunctionObject,
+    };
+
     class CallableWrapperBase {
     public:
         virtual ~CallableWrapperBase() = default;
@@ -209,23 +250,40 @@ private:
     }
 
     template<typename Callable>
-    void init_with_callable(Callable&& callable)
+    void init_with_callable(Callable&& callable, CallableKind callable_kind)
     {
+        if constexpr (alignof(Callable) > ExcessiveAlignmentThreshold && !AccommodateExcessiveAlignmentRequirements) {
+            static_assert(
+                alignof(Callable) <= ExcessiveAlignmentThreshold,
+                "This callable object has a very large alignment requirement, "
+                "check your capture list if it is a lambda expression, "
+                "and make sure your callable object is not excessively aligned.");
+        }
         VERIFY(m_call_nesting_level == 0);
         using WrapperType = CallableWrapper<Callable>;
-        if constexpr (sizeof(WrapperType) > inline_capacity) {
+#ifndef KERNEL
+        if constexpr (alignof(Callable) > inline_alignment || sizeof(WrapperType) > inline_capacity) {
             *bit_cast<CallableWrapperBase**>(&m_storage) = new WrapperType(forward<Callable>(callable));
             m_kind = FunctionKind::Outline;
         } else {
+#endif
+            static_assert(sizeof(WrapperType) <= inline_capacity);
             new (m_storage) WrapperType(forward<Callable>(callable));
             m_kind = FunctionKind::Inline;
+#ifndef KERNEL
         }
+#endif
+        if (callable_kind == CallableKind::FunctionObject)
+            m_size = sizeof(WrapperType);
+        else
+            m_size = 0;
     }
 
     void move_from(Function&& other)
     {
         VERIFY(m_call_nesting_level == 0 && other.m_call_nesting_level == 0);
         auto* other_wrapper = other.callable_wrapper();
+        m_size = other.m_size;
         switch (other.m_kind) {
         case FunctionKind::NullPointer:
             break;
@@ -243,14 +301,26 @@ private:
         other.m_kind = FunctionKind::NullPointer;
     }
 
+    size_t m_size { 0 };
     FunctionKind m_kind { FunctionKind::NullPointer };
     bool m_deferred_clear { false };
     mutable Atomic<u16> m_call_nesting_level { 0 };
+
+    static constexpr size_t inline_alignment = max(alignof(CallableWrapperBase), alignof(CallableWrapperBase*));
+#ifndef KERNEL
     // Empirically determined to fit most lambdas and functions.
     static constexpr size_t inline_capacity = 4 * sizeof(void*);
-    alignas(max(alignof(CallableWrapperBase), alignof(CallableWrapperBase*))) u8 m_storage[inline_capacity];
+#else
+    // FIXME: Try to decrease this.
+    static constexpr size_t inline_capacity = 6 * sizeof(void*);
+#endif
+
+    alignas(inline_alignment) u8 m_storage[inline_capacity];
 };
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::Function;
+using AK::IsCallableWithArguments;
+#endif

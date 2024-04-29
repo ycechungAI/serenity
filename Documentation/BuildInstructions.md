@@ -7,16 +7,16 @@ Make sure you have all the dependencies installed:
 ### Debian / Ubuntu
 
 ```console
-sudo apt install build-essential cmake curl libmpfr-dev libmpc-dev libgmp-dev e2fsprogs ninja-build qemu-system-gui qemu-system-x86 qemu-utils ccache rsync unzip texinfo
+sudo apt install build-essential cmake curl libmpfr-dev libmpc-dev libgmp-dev e2fsprogs ninja-build qemu-system-gui qemu-system-x86 qemu-utils ccache rsync unzip texinfo libssl-dev
 ```
+Optional: `fuse2fs` for [building images without root](https://github.com/SerenityOS/serenity/pull/11224).
 
-#### GCC 11
+#### GCC 12 or Clang 15
 
-On Ubuntu gcc-11 is available in the repositories of 21.04 (Hirsuite) and later - add the `ubuntu-toolchain-r/test` PPA if you're running an older version:
+A host compiler that supports C++20 features is required for building host tools, the newer the better. Tested versions include gcc-12 and clang-15.
 
-```console
-sudo add-apt-repository ppa:ubuntu-toolchain-r/test
-```
+On Ubuntu gcc-12 is available in the repositories of 22.04 (Jammy) and later.
+If you are running an older version, you will either need to upgrade, or find an alternative installation source.
 
 Next, update your local package information from this repository:
 
@@ -24,20 +24,38 @@ Next, update your local package information from this repository:
 sudo apt update
 ```
 
-Now on Ubuntu or Debian you can install gcc-11 with apt like this:
+Now on Ubuntu or Debian you can install gcc-12 with apt like this:
 
 ```console
-sudo apt install gcc-11 g++-11
+sudo apt install gcc-12 g++-12
 ```
 
-#### QEMU 5 or later
+#### QEMU 6.2 or later
 
-QEMU version 5 is available in Ubuntu 20.10, but it is recommended to build Qemu as provided by the toolchain by running `Toolchain/BuildQemu.sh`.
-Note that you might need additional dev packages:
+Version 6.2 of QEMU is available in Ubuntu 22.04. On earlier versions of Ubuntu,
+you can build the recommended version of QEMU as provided by the toolchain by running
+`Toolchain/BuildQemu.sh`.
+Note that you might need additional dev packages in order to build QEMU on your machine:
 
 ```console
-sudo apt install libgtk-3-dev libpixman-1-dev libsdl2-dev libspice-server-dev
+sudo apt install libgtk-3-dev libpixman-1-dev libsdl2-dev libslirp-dev libspice-server-dev
 ```
+
+#### CMake version 3.25.0 or later
+
+Serenity-specific patches were upstreamed to CMake in major version 3.25. To avoid carrying
+patches to CMake, the minimum required CMake to build Serenity is set to that version.
+If more patches are upstreamed to CMake, the minimum will be bumped again once that version releases.
+
+To accommodate distributions that do not ship bleeding-edge CMake versions, the build scripts will
+attempt to build CMake from source if the version on your path is older than 3.25.x.
+
+If you have previously compiled SerenityOS with an older or distribution-provided version of CMake,
+you will need to manually remove the CMakeCache.txt files, as these files reference the older CMake version and path.
+```console
+rm Build/*/CMakeCache.txt
+```
+
 
 ### Windows
 
@@ -47,8 +65,23 @@ for details.
 ### Arch Linux / Manjaro
 
 ```console
-sudo pacman -S --needed base-devel cmake curl mpfr libmpc gmp e2fsprogs ninja qemu qemu-arch-extra ccache rsync unzip
+sudo pacman -S --needed base-devel cmake curl mpfr libmpc gmp e2fsprogs ninja qemu-desktop qemu-system-aarch64 ccache rsync unzip
 ```
+Optional: `fuse2fs` for [building images without root](https://github.com/SerenityOS/serenity/pull/11224).
+
+### SerenityOS
+
+The following ports need to be installed:
+
+```console
+bash cmake curl e2fsprogs gawk genext2fs git ninja patch python3 qemu rsync
+```
+
+Additionally, for building using LLVM, install the `llvm` port.
+For building using GCC, install the `gcc`, `gmp` and `mpc` ports.
+
+Due to not-yet-finished POSIX shell support in `Shell`, a symlink from `/bin/sh` to `/usr/local/bin/bash` is required.
+This is best achieved by adding `ln -sf /usr/local/bin/bash mnt/bin/sh` to your [customization script](AdvancedBuildInstructions.md#customizing-the-disk-image).
 
 ### Other systems
 
@@ -59,22 +92,21 @@ There is also documentation for installing the build prerequisites for some less
 
 ## Build
 
-In order to build SerenityOS you will first need to build the toolchain by running the following command:
-
-```console
-Meta/serenity.sh rebuild-toolchain
-```
-
-Later on, when you use `git pull` to get the latest changes, there's (usually) no need to rebuild the toolchain.
-
 Run the following command to build and run SerenityOS:
 
 ```console
 Meta/serenity.sh run
 ```
 
-This will compile all of SerenityOS and install the built files into the `Build/i686/Root` directory inside your Git
+This will compile all of SerenityOS and install the built files into the `Build/x86_64/Root` directory inside your Git
 repository. It will also build a disk image and start SerenityOS using QEMU.
+
+The first time this command is executed, it will also download some required database files from the internet and build
+the SerenityOS cross-compiler toolchain. These steps only have to be done once, so the next build will go much faster.
+When we update to a newer compiler, you might be prompted to re-build the toolchain; see the [troubleshooting guide](Troubleshooting.md#the-toolchain-is-outdated)
+for what to do when this happens.
+
+If, during build, an error like `fusermount: failed to open /etc/mtab: No such file or directory` appears, you have installed `fuse2fs` but your system does not provide the mtab symlink for various reasons. Simply create this symlink with `ln -sv /proc/self/mounts /etc/mtab`.
 
 Note that the `anon` user is able to become `root` without a password by default, as a development convenience.
 To prevent this, remove `anon` from the `wheel` group and he will no longer be able to run `/bin/su`.
@@ -90,6 +122,20 @@ arguments for a list.
 To add a package from the ports collection to Serenity, for example curl, change into the `Ports/curl` directory and
 run `./package.sh`. The source code for the package will be downloaded and the package will be built. The next time you
 start Serenity, `curl` will be available.
+
+Ports might also have additional dependencies. Most prominently, you may need:
+`autoconf`, `automake`, `bison`, `flex`, `gettext`, `gperf`, `help2man`, `imagemagick` (specifically "convert"),
+`libgpg-error-dev`, `libtool`, `lzip`, `meson`, `nasm` (or another assembler), `python3-packaging`, `qt6-base-dev`,
+`rename`, `zip`.
+
+For select ports you might need slightly more exotic dependencies such as:
+- `file` (version 5.44 exactly, for file)
+- `libpython3-dev` (most prominently for boost)
+- `lua` (for luarocks)
+- `openjdk-17-jdk` (to compile OpenJDK)
+- `rake` (to build mruby).
+
+You may also need a symlink from "/usr/bin/python" to "/usr/bin/python3"; some ports depend on "python" existing, most notably ninja.
 
 ## More information
 

@@ -7,7 +7,6 @@
 #pragma once
 
 #include "AutoCompleteResponse.h"
-#include "Language.h"
 #include <AK/Forward.h>
 #include <AK/LexicalPath.h>
 #include <AK/Types.h>
@@ -16,6 +15,7 @@
 #include <LibCore/ElapsedTimer.h>
 #include <LibCpp/Preprocessor.h>
 #include <LibIPC/ConnectionToServer.h>
+#include <LibSyntax/Language.h>
 
 #include <DevTools/HackStudio/LanguageServers/LanguageClientEndpoint.h>
 #include <DevTools/HackStudio/LanguageServers/LanguageServerEndpoint.h>
@@ -31,7 +31,7 @@ class ConnectionToServer
     friend class ConnectionToServerWrapper;
 
 public:
-    ConnectionToServer(NonnullOwnPtr<Core::Stream::LocalSocket> socket, const String& project_path)
+    ConnectionToServer(NonnullOwnPtr<Core::LocalSocket> socket, ByteString const& project_path)
         : IPC::ConnectionToServer<LanguageClientEndpoint, LanguageServerEndpoint>(*this, move(socket))
     {
         m_project_path = project_path;
@@ -39,22 +39,22 @@ public:
     }
 
     WeakPtr<LanguageClient> language_client() { return m_current_language_client; }
-    const String& project_path() const { return m_project_path; }
+    ByteString const& project_path() const { return m_project_path; }
 
     virtual void die() override;
 
-    const LanguageClient* active_client() const { return !m_current_language_client ? nullptr : m_current_language_client.ptr(); }
+    LanguageClient const* active_client() const { return !m_current_language_client ? nullptr : m_current_language_client.ptr(); }
 
 protected:
-    virtual void auto_complete_suggestions(Vector<GUI::AutocompleteProvider::Entry> const&) override;
-    virtual void declaration_location(GUI::AutocompleteProvider::ProjectLocation const&) override;
-    virtual void declarations_in_document(String const&, Vector<GUI::AutocompleteProvider::Declaration> const&) override;
-    virtual void todo_entries_in_document(String const&, Vector<Cpp::Parser::TodoEntry> const&) override;
-    virtual void parameters_hint_result(Vector<String> const&, int index) override;
-    virtual void tokens_info_result(Vector<GUI::AutocompleteProvider::TokenInfo> const&) override;
+    virtual void auto_complete_suggestions(Vector<CodeComprehension::AutocompleteResultEntry> const&) override;
+    virtual void declaration_location(CodeComprehension::ProjectLocation const&) override;
+    virtual void declarations_in_document(ByteString const&, Vector<CodeComprehension::Declaration> const&) override;
+    virtual void todo_entries_in_document(ByteString const&, Vector<CodeComprehension::TodoEntry> const&) override;
+    virtual void parameters_hint_result(Vector<ByteString> const&, int index) override;
+    virtual void tokens_info_result(Vector<CodeComprehension::TokenInfo> const&) override;
     void set_wrapper(ConnectionToServerWrapper& wrapper) { m_wrapper = &wrapper; }
 
-    String m_project_path;
+    ByteString m_project_path;
     WeakPtr<LanguageClient> m_current_language_client;
     ConnectionToServerWrapper* m_wrapper { nullptr };
 };
@@ -63,13 +63,13 @@ class ConnectionToServerWrapper {
     AK_MAKE_NONCOPYABLE(ConnectionToServerWrapper);
 
 public:
-    explicit ConnectionToServerWrapper(const String& language_name, Function<NonnullRefPtr<ConnectionToServer>()> connection_creator);
+    explicit ConnectionToServerWrapper(ByteString const& language_name, Function<NonnullRefPtr<ConnectionToServer>()> connection_creator);
     ~ConnectionToServerWrapper() = default;
 
     template<typename LanguageServerType>
-    static ConnectionToServerWrapper& get_or_create(const String& project_path);
+    static ConnectionToServerWrapper& get_or_create(ByteString const& project_path);
 
-    Language language() const { return m_language; }
+    Syntax::Language language() const { return m_language; }
     ConnectionToServer* connection();
     void on_crash();
     void try_respawn_connection();
@@ -83,7 +83,7 @@ private:
     void show_crash_notification() const;
     void show_frequent_crashes_notification() const;
 
-    Language m_language;
+    Syntax::Language m_language;
     Function<NonnullRefPtr<ConnectionToServer>()> m_connection_creator;
     RefPtr<ConnectionToServer> m_connection;
 
@@ -93,13 +93,13 @@ private:
 
 class ConnectionToServerInstances {
 public:
-    static void set_instance_for_language(const String& language_name, NonnullOwnPtr<ConnectionToServerWrapper>&& connection_wrapper);
-    static void remove_instance_for_language(const String& language_name);
+    static void set_instance_for_language(ByteString const& language_name, NonnullOwnPtr<ConnectionToServerWrapper>&& connection_wrapper);
+    static void remove_instance_for_language(ByteString const& language_name);
 
-    static ConnectionToServerWrapper* get_instance_wrapper(const String& language_name);
+    static ConnectionToServerWrapper* get_instance_wrapper(ByteString const& language_name);
 
 private:
-    static HashMap<String, NonnullOwnPtr<ConnectionToServerWrapper>> s_instance_for_language;
+    static HashMap<ByteString, NonnullOwnPtr<ConnectionToServerWrapper>> s_instance_for_language;
 };
 
 class LanguageClient : public Weakable<LanguageClient> {
@@ -125,27 +125,27 @@ public:
             m_connection_wrapper.set_active_client(*m_previous_client);
     }
 
-    Language language() const { return m_connection_wrapper.language(); }
+    Syntax::Language language() const { return m_connection_wrapper.language(); }
     void set_active_client();
     bool is_active_client() const;
-    virtual void open_file(const String& path, int fd);
-    virtual void set_file_content(const String& path, const String& content);
-    virtual void insert_text(const String& path, const String& text, size_t line, size_t column);
-    virtual void remove_text(const String& path, size_t from_line, size_t from_column, size_t to_line, size_t to_column);
-    virtual void request_autocomplete(const String& path, size_t cursor_line, size_t cursor_column);
-    virtual void search_declaration(const String& path, size_t line, size_t column);
-    virtual void get_parameters_hint(const String& path, size_t line, size_t column);
-    virtual void get_tokens_info(const String& filename);
+    virtual void open_file(ByteString const& path, int fd);
+    virtual void set_file_content(ByteString const& path, ByteString const& content);
+    virtual void insert_text(ByteString const& path, ByteString const& text, size_t line, size_t column);
+    virtual void remove_text(ByteString const& path, size_t from_line, size_t from_column, size_t to_line, size_t to_column);
+    virtual void request_autocomplete(ByteString const& path, size_t cursor_line, size_t cursor_column);
+    virtual void search_declaration(ByteString const& path, size_t line, size_t column);
+    virtual void get_parameters_hint(ByteString const& path, size_t line, size_t column);
+    virtual void get_tokens_info(ByteString const& filename);
 
-    void provide_autocomplete_suggestions(const Vector<GUI::AutocompleteProvider::Entry>&) const;
-    void declaration_found(const String& file, size_t line, size_t column) const;
-    void parameters_hint_result(Vector<String> const& params, size_t argument_index) const;
+    void provide_autocomplete_suggestions(Vector<CodeComprehension::AutocompleteResultEntry> const&) const;
+    void declaration_found(ByteString const& file, size_t line, size_t column) const;
+    void parameters_hint_result(Vector<ByteString> const& params, size_t argument_index) const;
 
     // Callbacks that get called when the result of a language server query is ready
-    Function<void(Vector<GUI::AutocompleteProvider::Entry>)> on_autocomplete_suggestions;
-    Function<void(const String&, size_t, size_t)> on_declaration_found;
-    Function<void(Vector<String> const&, size_t)> on_function_parameters_hint_result;
-    Function<void(Vector<GUI::AutocompleteProvider::TokenInfo> const&)> on_tokens_info_result;
+    Function<void(Vector<CodeComprehension::AutocompleteResultEntry>)> on_autocomplete_suggestions;
+    Function<void(ByteString const&, size_t, size_t)> on_declaration_found;
+    Function<void(Vector<ByteString> const&, size_t)> on_function_parameters_hint_result;
+    Function<void(Vector<CodeComprehension::TokenInfo> const&)> on_tokens_info_result;
 
 private:
     ConnectionToServerWrapper& m_connection_wrapper;
@@ -153,13 +153,13 @@ private:
 };
 
 template<typename ConnectionToServerT>
-static inline NonnullOwnPtr<LanguageClient> get_language_client(const String& project_path)
+static inline NonnullOwnPtr<LanguageClient> get_language_client(ByteString const& project_path)
 {
     return make<LanguageClient>(ConnectionToServerWrapper::get_or_create<ConnectionToServerT>(project_path));
 }
 
 template<typename LanguageServerType>
-ConnectionToServerWrapper& ConnectionToServerWrapper::get_or_create(const String& project_path)
+ConnectionToServerWrapper& ConnectionToServerWrapper::get_or_create(ByteString const& project_path)
 {
     auto* wrapper = ConnectionToServerInstances::get_instance_wrapper(LanguageServerType::language_name());
     if (wrapper)

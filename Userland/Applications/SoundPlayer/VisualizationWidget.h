@@ -6,32 +6,37 @@
 
 #pragma once
 
+#include <AK/FixedArray.h>
 #include <AK/Forward.h>
 #include <AK/TypedTransfer.h>
-#include <LibAudio/Buffer.h>
+#include <LibAudio/Sample.h>
 #include <LibGUI/Frame.h>
 #include <LibGUI/Painter.h>
 
 class VisualizationWidget : public GUI::Frame {
-    C_OBJECT(VisualizationWidget)
+    C_OBJECT_ABSTRACT(VisualizationWidget)
 
 public:
-    virtual void render(GUI::PaintEvent&, FixedArray<double> const& samples) = 0;
+    virtual void render(GUI::PaintEvent&, FixedArray<float> const& samples) = 0;
 
-    void set_buffer(RefPtr<Audio::Buffer> buffer)
+    void set_buffer(FixedArray<Audio::Sample> const& buffer)
     {
-        if (buffer.is_null())
+        if (buffer.is_empty())
             return;
-        if (buffer->id() == m_last_buffer_id)
-            return;
-        m_last_buffer_id = buffer->id();
 
-        if (m_sample_buffer.size() != static_cast<size_t>(buffer->sample_count()))
-            m_sample_buffer.resize(buffer->sample_count());
+        if (m_sample_buffer.size() != buffer.size())
+            m_sample_buffer.resize(buffer.size());
 
-        for (size_t i = 0; i < static_cast<size_t>(buffer->sample_count()); i++)
-            m_sample_buffer.data()[i] = (buffer->samples()[i].left + buffer->samples()[i].right) / 2.;
+        for (size_t i = 0; i < buffer.size(); i++)
+            m_sample_buffer.data()[i] = (buffer[i].left + buffer[i].right) / 2.f;
 
+        m_frame_count = 0;
+    }
+
+    void reset_buffer()
+    {
+        m_sample_buffer.clear();
+        m_render_buffer.fill_with(.0f);
         m_frame_count = 0;
     }
 
@@ -57,7 +62,7 @@ public:
         if (buffer_position + m_render_buffer.size() >= m_sample_buffer.size())
             buffer_position = m_sample_buffer.size() - m_render_buffer.size();
 
-        AK::TypedTransfer<double>::copy(m_render_buffer.data(), m_sample_buffer.span().slice(buffer_position).data(), m_render_buffer.size());
+        AK::TypedTransfer<float>::copy(m_render_buffer.data(), m_sample_buffer.span().slice(buffer_position).data(), m_render_buffer.size());
 
         render(event, m_render_buffer);
     }
@@ -72,7 +77,7 @@ public:
 
     ErrorOr<void> set_render_sample_count(size_t count)
     {
-        auto new_buffer = TRY(FixedArray<double>::try_create(count));
+        auto new_buffer = TRY(FixedArray<float>::create(count));
         m_render_buffer.swap(new_buffer);
         return {};
     }
@@ -80,16 +85,14 @@ public:
 
 protected:
     int m_samplerate;
-    int m_last_buffer_id;
     size_t m_frame_count;
-    Vector<double> m_sample_buffer;
-    FixedArray<double> m_render_buffer;
+    Vector<float> m_sample_buffer;
+    FixedArray<float> m_render_buffer;
 
     static constexpr size_t REFRESH_TIME_MILLISECONDS = 30;
 
     VisualizationWidget()
         : m_samplerate(-1)
-        , m_last_buffer_id(-1)
         , m_frame_count(0)
     {
         start_timer(REFRESH_TIME_MILLISECONDS);

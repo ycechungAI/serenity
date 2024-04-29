@@ -17,21 +17,26 @@ namespace Browser {
 class CookiesModel final : public GUI::Model {
 public:
     enum Column {
-        Name,
-        Value,
         Domain,
         Path,
+        Name,
+        Value,
         ExpiryTime,
+        SameSite,
         __Count,
     };
 
-    void add_item(Web::Cookie::Cookie const& item);
+    void set_items(AK::Vector<Web::Cookie::Cookie> items);
     void clear_items();
-    virtual int row_count(GUI::ModelIndex const&) const override { return m_cookies.size(); }
+    virtual int row_count(GUI::ModelIndex const&) const override;
     virtual int column_count(GUI::ModelIndex const& = GUI::ModelIndex()) const override { return Column::__Count; }
-    virtual String column_name(int column) const override;
+    virtual ErrorOr<String> column_name(int) const override;
     virtual GUI::ModelIndex index(int row, int column = 0, GUI::ModelIndex const& = GUI::ModelIndex()) const override;
     virtual GUI::Variant data(GUI::ModelIndex const& index, GUI::ModelRole role = GUI::ModelRole::Display) const override;
+    virtual GUI::Model::MatchResult data_matches(GUI::ModelIndex const& index, GUI::Variant const& term) const override;
+
+    Web::Cookie::Cookie take_cookie(GUI::ModelIndex const&);
+    AK::Vector<Web::Cookie::Cookie> take_all_cookies();
 
 private:
     AK::Vector<Web::Cookie::Cookie> m_cookies;

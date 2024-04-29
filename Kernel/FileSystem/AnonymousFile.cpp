@@ -1,34 +1,31 @@
 /*
- * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <Kernel/FileSystem/AnonymousFile.h>
 #include <Kernel/Memory/AnonymousVMObject.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
-AnonymousFile::AnonymousFile(NonnullRefPtr<Memory::AnonymousVMObject> vmobject)
+AnonymousFile::AnonymousFile(NonnullLockRefPtr<Memory::AnonymousVMObject> vmobject)
     : m_vmobject(move(vmobject))
 {
 }
 
 AnonymousFile::~AnonymousFile() = default;
 
-ErrorOr<Memory::Region*> AnonymousFile::mmap(Process& process, OpenFileDescription&, Memory::VirtualRange const& range, u64 offset, int prot, bool shared)
+ErrorOr<NonnullLockRefPtr<Memory::VMObject>> AnonymousFile::vmobject_for_mmap(Process&, Memory::VirtualRange const&, u64& offset, bool)
 {
     if (offset != 0)
         return EINVAL;
 
-    if (range.size() != m_vmobject->size())
-        return EINVAL;
-
-    return process.address_space().allocate_region_with_vmobject(range, m_vmobject, offset, {}, prot, shared);
+    return m_vmobject;
 }
 
-ErrorOr<NonnullOwnPtr<KString>> AnonymousFile::pseudo_path(const OpenFileDescription&) const
+ErrorOr<NonnullOwnPtr<KString>> AnonymousFile::pseudo_path(OpenFileDescription const&) const
 {
     return KString::try_create(":anonymous-file:"sv);
 }

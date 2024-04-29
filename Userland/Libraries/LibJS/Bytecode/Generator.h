@@ -1,14 +1,14 @@
 /*
- * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2024, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <AK/SinglyLinkedList.h>
+#include <LibJS/AST.h>
 #include <LibJS/Bytecode/BasicBlock.h>
 #include <LibJS/Bytecode/CodeGenerationError.h>
 #include <LibJS/Bytecode/Executable.h>
@@ -19,70 +19,123 @@
 #include <LibJS/Bytecode/StringTable.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/FunctionKind.h>
+#include <LibRegex/Regex.h>
 
 namespace JS::Bytecode {
 
 class Generator {
 public:
+    VM& vm() { return m_vm; }
+
     enum class SurroundingScopeKind {
         Global,
         Function,
         Block,
     };
-    static CodeGenerationErrorOr<NonnullOwnPtr<Executable>> generate(ASTNode const&, FunctionKind = FunctionKind::Normal);
+    static CodeGenerationErrorOr<NonnullGCPtr<Executable>> generate(VM&, ASTNode const&, ReadonlySpan<FunctionParameter> parameters, FunctionKind = FunctionKind::Normal);
 
     Register allocate_register();
 
-    void ensure_enough_space(size_t size)
-    {
-        // Make sure there's always enough space for a single jump at the end.
-        if (!m_current_basic_block->can_grow(size + sizeof(Op::Jump))) {
-            auto& new_block = make_block();
-            emit<Op::Jump>().set_targets(
-                Label { new_block },
-                {});
-            switch_to_basic_block(new_block);
-        }
-    }
+    void set_local_initialized(u32 local_index);
+    [[nodiscard]] bool is_local_initialized(u32 local_index) const;
+
+    class SourceLocationScope {
+    public:
+        SourceLocationScope(Generator&, ASTNode const& node);
+        ~SourceLocationScope();
+
+    private:
+        Generator& m_generator;
+        ASTNode const* m_previous_node { nullptr };
+    };
+
+    class UnwindContext {
+    public:
+        UnwindContext(Generator&, Optional<Label> finalizer);
+
+        UnwindContext const* previous() const { return m_previous_context; }
+        void set_handler(Label handler) { m_handler = handler; }
+        Optional<Label> handler() const { return m_handler; }
+        Optional<Label> finalizer() const { return m_finalizer; }
+
+        ~UnwindContext();
+
+    private:
+        Generator& m_generator;
+        Optional<Label> m_finalizer;
+        Optional<Label> m_handler {};
+        UnwindContext const* m_previous_context { nullptr };
+    };
 
     template<typename OpType, typename... Args>
-    OpType& emit(Args&&... args)
+    void emit(Args&&... args)
     {
         VERIFY(!is_current_block_terminated());
-        // If the block doesn't have enough space, switch to another block
-        if constexpr (!OpType::IsTerminator)
-            ensure_enough_space(sizeof(OpType));
-
-        void* slot = next_slot();
+        size_t slot_offset = m_current_basic_block->size();
         grow(sizeof(OpType));
+        void* slot = m_current_basic_block->data() + slot_offset;
         new (slot) OpType(forward<Args>(args)...);
         if constexpr (OpType::IsTerminator)
             m_current_basic_block->terminate({});
-        return *static_cast<OpType*>(slot);
+        auto* op = static_cast<OpType*>(slot);
+        op->set_source_record({ m_current_ast_node->start_offset(), m_current_ast_node->end_offset() });
+    }
+
+    template<typename OpType, typename ExtraSlotType, typename... Args>
+    void emit_with_extra_slots(size_t extra_slot_count, Args&&... args)
+    {
+        VERIFY(!is_current_block_terminated());
+
+        size_t size_to_allocate = round_up_to_power_of_two(sizeof(OpType) + extra_slot_count * sizeof(ExtraSlotType), alignof(void*));
+        size_t slot_offset = m_current_basic_block->size();
+        grow(size_to_allocate);
+        void* slot = m_current_basic_block->data() + slot_offset;
+        new (slot) OpType(forward<Args>(args)...);
+        if constexpr (OpType::IsTerminator)
+            m_current_basic_block->terminate({});
+        auto* op = static_cast<OpType*>(slot);
+        op->set_source_record({ m_current_ast_node->start_offset(), m_current_ast_node->end_offset() });
     }
 
     template<typename OpType, typename... Args>
-    OpType& emit_with_extra_register_slots(size_t extra_register_slots, Args&&... args)
+    void emit_with_extra_operand_slots(size_t extra_operand_slots, Args&&... args)
     {
-        VERIFY(!is_current_block_terminated());
-        // If the block doesn't have enough space, switch to another block
-        if constexpr (!OpType::IsTerminator)
-            ensure_enough_space(sizeof(OpType) + extra_register_slots * sizeof(Register));
-
-        void* slot = next_slot();
-        grow(sizeof(OpType) + extra_register_slots * sizeof(Register));
-        new (slot) OpType(forward<Args>(args)...);
-        if constexpr (OpType::IsTerminator)
-            m_current_basic_block->terminate({});
-        return *static_cast<OpType*>(slot);
+        emit_with_extra_slots<OpType, Operand>(extra_operand_slots, forward<Args>(args)...);
     }
 
-    CodeGenerationErrorOr<void> emit_load_from_reference(JS::ASTNode const&);
-    CodeGenerationErrorOr<void> emit_store_to_reference(JS::ASTNode const&);
+    template<typename OpType, typename... Args>
+    void emit_with_extra_value_slots(size_t extra_operand_slots, Args&&... args)
+    {
+        emit_with_extra_slots<OpType, Value>(extra_operand_slots, forward<Args>(args)...);
+    }
 
-    void begin_continuable_scope(Label continue_target);
+    struct ReferenceOperands {
+        Optional<Operand> base {};                                       // [[Base]]
+        Optional<Operand> referenced_name {};                            // [[ReferencedName]] as an operand
+        Optional<IdentifierTableIndex> referenced_identifier {};         // [[ReferencedName]] as an identifier
+        Optional<IdentifierTableIndex> referenced_private_identifier {}; // [[ReferencedName]] as a private identifier
+        Optional<Operand> this_value {};                                 // [[ThisValue]]
+        Optional<Operand> loaded_value {};                               // Loaded value, if we've performed a load.
+    };
+
+    CodeGenerationErrorOr<ReferenceOperands> emit_load_from_reference(JS::ASTNode const&, Optional<Operand> preferred_dst = {});
+    CodeGenerationErrorOr<void> emit_store_to_reference(JS::ASTNode const&, Operand value);
+    CodeGenerationErrorOr<void> emit_store_to_reference(ReferenceOperands const&, Operand value);
+    CodeGenerationErrorOr<Optional<Operand>> emit_delete_reference(JS::ASTNode const&);
+
+    CodeGenerationErrorOr<ReferenceOperands> emit_super_reference(MemberExpression const&);
+
+    void emit_set_variable(JS::Identifier const& identifier, Operand value, Bytecode::Op::SetVariable::InitializationMode initialization_mode = Bytecode::Op::SetVariable::InitializationMode::Set, Bytecode::Op::EnvironmentMode mode = Bytecode::Op::EnvironmentMode::Lexical);
+
+    void push_home_object(Operand);
+    void pop_home_object();
+    void emit_new_function(Operand dst, JS::FunctionExpression const&, Optional<IdentifierTableIndex> lhs_name);
+
+    CodeGenerationErrorOr<Optional<Operand>> emit_named_evaluation_if_anonymous_function(Expression const&, Optional<IdentifierTableIndex> lhs_name, Optional<Operand> preferred_dst = {});
+
+    void begin_continuable_scope(Label continue_target, Vector<DeprecatedFlyString> const& language_label_set);
     void end_continuable_scope();
-    void begin_breakable_scope(Label breakable_target);
+    void begin_breakable_scope(Label breakable_target, Vector<DeprecatedFlyString> const& language_label_set);
     void end_breakable_scope();
 
     [[nodiscard]] Label nearest_continuable_scope() const;
@@ -98,9 +151,16 @@ public:
     BasicBlock& make_block(String name = {})
     {
         if (name.is_empty())
-            name = String::number(m_next_block++);
-        m_root_basic_blocks.append(BasicBlock::create(name));
-        return m_root_basic_blocks.last();
+            name = MUST(String::number(m_next_block++));
+        auto block = BasicBlock::create(name);
+        if (auto const* context = m_current_unwind_context) {
+            if (context->handler().has_value())
+                block->set_handler(context->handler().value().block());
+            if (m_current_unwind_context->finalizer().has_value())
+                block->set_finalizer(context->finalizer().value().block());
+        }
+        m_root_basic_blocks.append(move(block));
+        return *m_root_basic_blocks.last();
     }
 
     bool is_current_block_terminated() const
@@ -108,19 +168,27 @@ public:
         return m_current_basic_block->is_terminated();
     }
 
-    StringTableIndex intern_string(String string)
+    StringTableIndex intern_string(ByteString string)
     {
         return m_string_table->insert(move(string));
     }
 
-    IdentifierTableIndex intern_identifier(FlyString string)
+    RegexTableIndex intern_regex(ParsedRegex regex)
+    {
+        return m_regex_table->insert(move(regex));
+    }
+
+    IdentifierTableIndex intern_identifier(DeprecatedFlyString string)
     {
         return m_identifier_table->insert(move(string));
     }
 
-    bool is_in_generator_or_async_function() const { return m_enclosing_function_kind == FunctionKind::Async || m_enclosing_function_kind == FunctionKind::Generator; }
-    bool is_in_generator_function() const { return m_enclosing_function_kind == FunctionKind::Generator; }
-    bool is_in_async_function() const { return m_enclosing_function_kind == FunctionKind::Async; }
+    Optional<IdentifierTableIndex> intern_identifier_for_expression(Expression const& expression);
+
+    bool is_in_generator_or_async_function() const { return m_enclosing_function_kind == FunctionKind::Async || m_enclosing_function_kind == FunctionKind::Generator || m_enclosing_function_kind == FunctionKind::AsyncGenerator; }
+    bool is_in_generator_function() const { return m_enclosing_function_kind == FunctionKind::Generator || m_enclosing_function_kind == FunctionKind::AsyncGenerator; }
+    bool is_in_async_function() const { return m_enclosing_function_kind == FunctionKind::Async || m_enclosing_function_kind == FunctionKind::AsyncGenerator; }
+    bool is_in_async_generator_function() const { return m_enclosing_function_kind == FunctionKind::AsyncGenerator; }
 
     enum class BindingMode {
         Lexical,
@@ -129,61 +197,50 @@ public:
     };
     struct LexicalScope {
         SurroundingScopeKind kind;
-        BindingMode mode;
-        HashTable<IdentifierTableIndex> known_bindings;
     };
 
-    void register_binding(IdentifierTableIndex identifier, BindingMode mode = BindingMode::Lexical)
-    {
-        m_variable_scopes.last_matching([&](auto& x) { return x.mode == BindingMode::Global || x.mode == mode; })->known_bindings.set(identifier);
-    }
-    bool has_binding(IdentifierTableIndex identifier, Optional<BindingMode> const& specific_binding_mode = {})
-    {
-        for (auto index = m_variable_scopes.size(); index > 0; --index) {
-            auto& scope = m_variable_scopes[index - 1];
+    void block_declaration_instantiation(ScopeNode const&);
 
-            if (scope.mode != BindingMode::Global && specific_binding_mode.value_or(scope.mode) != scope.mode)
-                continue;
-
-            if (scope.known_bindings.contains(identifier))
-                return true;
-        }
-        return false;
-    }
-
-    void begin_variable_scope(BindingMode mode = BindingMode::Lexical, SurroundingScopeKind kind = SurroundingScopeKind::Block);
+    void begin_variable_scope();
     void end_variable_scope();
 
     enum class BlockBoundaryType {
         Break,
         Continue,
         Unwind,
+        ReturnToFinally,
         LeaveLexicalEnvironment,
-        LeaveVariableEnvironment,
     };
     template<typename OpType>
-    void perform_needed_unwinds(bool is_break_node = false) requires(OpType::IsTerminator)
+    void perform_needed_unwinds()
+    requires(OpType::IsTerminator && !IsSame<OpType, Op::Jump>)
     {
-        Optional<BlockBoundaryType> boundary_to_stop_at;
-        if constexpr (IsSame<OpType, Bytecode::Op::Return> || IsSame<OpType, Bytecode::Op::Yield>)
-            VERIFY(!is_break_node);
-        else if constexpr (IsSame<OpType, Bytecode::Op::Throw>)
-            boundary_to_stop_at = BlockBoundaryType::Unwind;
-        else
-            boundary_to_stop_at = is_break_node ? BlockBoundaryType::Break : BlockBoundaryType::Continue;
-
         for (size_t i = m_boundaries.size(); i > 0; --i) {
             auto boundary = m_boundaries[i - 1];
-            if (boundary_to_stop_at.has_value() && boundary == *boundary_to_stop_at)
-                break;
-            if (boundary == BlockBoundaryType::Unwind)
+            using enum BlockBoundaryType;
+            switch (boundary) {
+            case Unwind:
+                if constexpr (IsSame<OpType, Bytecode::Op::Throw>)
+                    return;
                 emit<Bytecode::Op::LeaveUnwindContext>();
-            else if (boundary == BlockBoundaryType::LeaveLexicalEnvironment)
-                emit<Bytecode::Op::LeaveEnvironment>(Bytecode::Op::EnvironmentMode::Lexical);
-            else if (boundary == BlockBoundaryType::LeaveVariableEnvironment)
-                emit<Bytecode::Op::LeaveEnvironment>(Bytecode::Op::EnvironmentMode::Var);
+                break;
+            case LeaveLexicalEnvironment:
+                emit<Bytecode::Op::LeaveLexicalEnvironment>();
+                break;
+            case Break:
+            case Continue:
+                break;
+            case ReturnToFinally:
+                return;
+            };
         }
     }
+
+    void generate_break();
+    void generate_break(DeprecatedFlyString const& break_label);
+
+    void generate_continue();
+    void generate_continue(DeprecatedFlyString const& continue_label);
 
     void start_boundary(BlockBoundaryType type) { m_boundaries.append(type); }
     void end_boundary(BlockBoundaryType type)
@@ -192,25 +249,75 @@ public:
         m_boundaries.take_last();
     }
 
+    void emit_get_by_id(Operand dst, Operand base, IdentifierTableIndex property_identifier, Optional<IdentifierTableIndex> base_identifier = {});
+
+    void emit_get_by_id_with_this(Operand dst, Operand base, IdentifierTableIndex, Operand this_value);
+
+    void emit_iterator_value(Operand dst, Operand result);
+    void emit_iterator_complete(Operand dst, Operand result);
+
+    [[nodiscard]] size_t next_global_variable_cache() { return m_next_global_variable_cache++; }
+    [[nodiscard]] size_t next_environment_variable_cache() { return m_next_environment_variable_cache++; }
+    [[nodiscard]] size_t next_property_lookup_cache() { return m_next_property_lookup_cache++; }
+
+    enum class DeduplicateConstant {
+        Yes,
+        No,
+    };
+    [[nodiscard]] Operand add_constant(Value value, DeduplicateConstant deduplicate_constant = DeduplicateConstant::Yes)
+    {
+        if (deduplicate_constant == DeduplicateConstant::Yes) {
+            for (size_t i = 0; i < m_constants.size(); ++i) {
+                if (m_constants[i] == value)
+                    return Operand(Operand::Type::Constant, i);
+            }
+        }
+        m_constants.append(value);
+        return Operand(Operand::Type::Constant, m_constants.size() - 1);
+    }
+
 private:
-    Generator();
+    VM& m_vm;
+
+    enum class JumpType {
+        Continue,
+        Break,
+    };
+    void generate_scoped_jump(JumpType);
+    void generate_labelled_jump(JumpType, DeprecatedFlyString const& label);
+
+    explicit Generator(VM&);
     ~Generator() = default;
 
     void grow(size_t);
-    void* next_slot();
+
+    struct LabelableScope {
+        Label bytecode_target;
+        Vector<DeprecatedFlyString> language_label_set;
+    };
 
     BasicBlock* m_current_basic_block { nullptr };
-    NonnullOwnPtrVector<BasicBlock> m_root_basic_blocks;
+    ASTNode const* m_current_ast_node { nullptr };
+    UnwindContext const* m_current_unwind_context { nullptr };
+
+    Vector<NonnullOwnPtr<BasicBlock>> m_root_basic_blocks;
     NonnullOwnPtr<StringTable> m_string_table;
     NonnullOwnPtr<IdentifierTable> m_identifier_table;
+    NonnullOwnPtr<RegexTable> m_regex_table;
+    MarkedVector<Value> m_constants;
 
-    u32 m_next_register { 2 };
+    u32 m_next_register { Register::reserved_register_count };
     u32 m_next_block { 1 };
+    u32 m_next_property_lookup_cache { 0 };
+    u32 m_next_global_variable_cache { 0 };
+    u32 m_next_environment_variable_cache { 0 };
     FunctionKind m_enclosing_function_kind { FunctionKind::Normal };
-    Vector<Label> m_continuable_scopes;
-    Vector<Label> m_breakable_scopes;
-    Vector<LexicalScope> m_variable_scopes;
+    Vector<LabelableScope> m_continuable_scopes;
+    Vector<LabelableScope> m_breakable_scopes;
     Vector<BlockBoundaryType> m_boundaries;
+    Vector<Operand> m_home_objects;
+
+    HashTable<u32> m_initialized_locals;
 };
 
 }

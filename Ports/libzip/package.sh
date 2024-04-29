@@ -1,17 +1,19 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=libzip
-useconfigure=true
-version=1.7.3
-depends=("zlib")
-workdir=libzip-${version}
-configopts=("-DCMAKE_TOOLCHAIN_FILE=${SERENITY_BUILD_DIR}/CMakeToolchain.txt")
-files="https://libzip.org/download/libzip-${version}.tar.gz libzip-${version}.tar.gz 0e2276c550c5a310d4ebf3a2c3dfc43fb3b4602a072ff625842ad4f3238cb9cc"
-auth_type=sha256
+port='libzip'
+version='1.10.1'
+files=(
+    "https://libzip.org/download/libzip-${version}.tar.gz#9669ae5dfe3ac5b3897536dc8466a874c8cf2c0e3b1fdd08d75b273884299363"
+)
+useconfigure='true'
+depends=(
+    'zlib'
+)
 
 configure() {
-    run cmake "${configopts[@]}"
+    run cmake \
+        -DCMAKE_TOOLCHAIN_FILE="${SERENITY_BUILD_DIR}/CMakeToolchain.txt"
 }
 
 install() {
-    run make DESTDIR=$SERENITY_BUILD_DIR/Root install
+    run make install
 }

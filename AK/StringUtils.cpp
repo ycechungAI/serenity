@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <awesomekling@gmail.com>
+ * Copyright (c) 2018-2022, Andreas Kling <awesomekling@gmail.com>
  * Copyright (c) 2020, Fei Wu <f.eiwu@yahoo.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
@@ -7,15 +7,19 @@
 
 #include <AK/CharacterTypes.h>
 #include <AK/MemMem.h>
-#include <AK/Memory.h>
 #include <AK/Optional.h>
+#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/StringUtils.h>
 #include <AK/StringView.h>
 #include <AK/Vector.h>
 
-#ifndef KERNEL
-#    include <AK/String.h>
+#ifdef KERNEL
+#    include <Kernel/Library/StdLib.h>
+#else
+#    include <AK/ByteString.h>
+#    include <AK/FloatingPointStringConversions.h>
+#    include <string.h>
 #endif
 
 namespace AK {
@@ -37,11 +41,11 @@ bool matches(StringView str, StringView mask, CaseSensitivity case_sensitivity, 
         return true;
     }
 
-    const char* string_ptr = str.characters_without_null_termination();
-    const char* string_start = str.characters_without_null_termination();
-    const char* string_end = string_ptr + str.length();
-    const char* mask_ptr = mask.characters_without_null_termination();
-    const char* mask_end = mask_ptr + mask.length();
+    char const* string_ptr = str.characters_without_null_termination();
+    char const* string_start = str.characters_without_null_termination();
+    char const* string_end = string_ptr + str.length();
+    char const* mask_ptr = mask.characters_without_null_termination();
+    char const* mask_end = mask_ptr + mask.length();
 
     while (string_ptr < string_end && mask_ptr < mask_end) {
         auto string_start_ptr = string_ptr;
@@ -59,6 +63,12 @@ bool matches(StringView str, StringView mask, CaseSensitivity case_sensitivity, 
         case '?':
             record_span(string_ptr - string_start, 1);
             break;
+        case '\\':
+            // if backslash is last character in mask, just treat it as an exact match
+            // otherwise use it as escape for next character
+            if (mask_ptr + 1 < mask_end)
+                ++mask_ptr;
+            [[fallthrough]];
         default:
             auto p = *mask_ptr;
             auto ch = *string_ptr;
@@ -92,7 +102,7 @@ Optional<T> convert_to_int(StringView str, TrimWhitespace trim_whitespace)
 
     T sign = 1;
     size_t i = 0;
-    const auto characters = string.characters_without_null_termination();
+    auto const characters = string.characters_without_null_termination();
 
     if (characters[0] == '-' || characters[0] == '+') {
         if (string.length() == 1)
@@ -132,7 +142,7 @@ Optional<T> convert_to_uint(StringView str, TrimWhitespace trim_whitespace)
         return {};
 
     T value = 0;
-    const auto characters = string.characters_without_null_termination();
+    auto const characters = string.characters_without_null_termination();
 
     for (size_t i = 0; i < string.length(); i++) {
         if (characters[i] < '0' || characters[i] > '9')
@@ -152,8 +162,6 @@ template Optional<u16> convert_to_uint(StringView str, TrimWhitespace);
 template Optional<u32> convert_to_uint(StringView str, TrimWhitespace);
 template Optional<unsigned long> convert_to_uint(StringView str, TrimWhitespace);
 template Optional<unsigned long long> convert_to_uint(StringView str, TrimWhitespace);
-template Optional<long> convert_to_uint(StringView str, TrimWhitespace);
-template Optional<long long> convert_to_uint(StringView str, TrimWhitespace);
 
 template<typename T>
 Optional<T> convert_to_uint_from_hex(StringView str, TrimWhitespace trim_whitespace)
@@ -165,8 +173,8 @@ Optional<T> convert_to_uint_from_hex(StringView str, TrimWhitespace trim_whitesp
         return {};
 
     T value = 0;
-    const auto count = string.length();
-    const T upper_bound = NumericLimits<T>::max();
+    auto const count = string.length();
+    T const upper_bound = NumericLimits<T>::max();
 
     for (size_t i = 0; i < count; i++) {
         char digit = string[i];
@@ -204,8 +212,8 @@ Optional<T> convert_to_uint_from_octal(StringView str, TrimWhitespace trim_white
         return {};
 
     T value = 0;
-    const auto count = string.length();
-    const T upper_bound = NumericLimits<T>::max();
+    auto const count = string.length();
+    T const upper_bound = NumericLimits<T>::max();
 
     for (size_t i = 0; i < count; i++) {
         char digit = string[i];
@@ -229,7 +237,24 @@ template Optional<u16> convert_to_uint_from_octal(StringView str, TrimWhitespace
 template Optional<u32> convert_to_uint_from_octal(StringView str, TrimWhitespace);
 template Optional<u64> convert_to_uint_from_octal(StringView str, TrimWhitespace);
 
-bool equals_ignoring_case(StringView a, StringView b)
+#ifndef KERNEL
+template<typename T>
+Optional<T> convert_to_floating_point(StringView str, TrimWhitespace trim_whitespace)
+{
+    static_assert(IsSame<T, double> || IsSame<T, float>);
+    auto string = trim_whitespace == TrimWhitespace::Yes
+        ? str.trim_whitespace()
+        : str;
+
+    char const* start = string.characters_without_null_termination();
+    return parse_floating_point_completely<T>(start, start + string.length());
+}
+
+template Optional<double> convert_to_floating_point(StringView str, TrimWhitespace);
+template Optional<float> convert_to_floating_point(StringView str, TrimWhitespace);
+#endif
+
+bool equals_ignoring_ascii_case(StringView a, StringView b)
 {
     if (a.length() != b.length())
         return false;
@@ -329,7 +354,7 @@ StringView trim(StringView str, StringView characters, TrimMode mode)
     if (mode == TrimMode::Left || mode == TrimMode::Both) {
         for (size_t i = 0; i < str.length(); ++i) {
             if (substring_length == 0)
-                return "";
+                return ""sv;
             if (!characters.contains(str[i]))
                 break;
             ++substring_start;
@@ -338,10 +363,10 @@ StringView trim(StringView str, StringView characters, TrimMode mode)
     }
 
     if (mode == TrimMode::Right || mode == TrimMode::Both) {
-        for (size_t i = str.length() - 1; i > 0; --i) {
+        for (size_t i = str.length(); i > 0; --i) {
             if (substring_length == 0)
-                return "";
-            if (!characters.contains(str[i]))
+                return ""sv;
+            if (!characters.contains(str[i - 1]))
                 break;
             --substring_length;
         }
@@ -352,7 +377,7 @@ StringView trim(StringView str, StringView characters, TrimMode mode)
 
 StringView trim_whitespace(StringView str, TrimMode mode)
 {
-    return trim(str, " \n\t\v\f\r", mode);
+    return trim(str, " \n\t\v\f\r"sv, mode);
 }
 
 Optional<size_t> find(StringView haystack, char needle, size_t start)
@@ -380,6 +405,31 @@ Optional<size_t> find_last(StringView haystack, char needle)
 {
     for (size_t i = haystack.length(); i > 0; --i) {
         if (haystack[i - 1] == needle)
+            return i - 1;
+    }
+    return {};
+}
+
+Optional<size_t> find_last(StringView haystack, StringView needle)
+{
+    if (needle.length() > haystack.length())
+        return {};
+
+    for (size_t i = haystack.length() - needle.length();; --i) {
+        if (haystack.substring_view(i, needle.length()) == needle)
+            return i;
+
+        if (i == 0)
+            break;
+    }
+
+    return {};
+}
+
+Optional<size_t> find_last_not(StringView haystack, char needle)
+{
+    for (size_t i = haystack.length(); i > 0; --i) {
+        if (haystack[i - 1] != needle)
             return i - 1;
     }
     return {};
@@ -420,7 +470,7 @@ Optional<size_t> find_any_of(StringView haystack, StringView needles, SearchDire
 }
 
 #ifndef KERNEL
-String to_snakecase(StringView str)
+ByteString to_snakecase(StringView str)
 {
     auto should_insert_underscore = [&](auto i, auto current_char) {
         if (i == 0)
@@ -443,51 +493,101 @@ String to_snakecase(StringView str)
             builder.append('_');
         builder.append_as_lowercase(ch);
     }
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
-String to_titlecase(StringView str)
+ByteString to_titlecase(StringView str)
 {
     StringBuilder builder;
     bool next_is_upper = true;
 
     for (auto ch : str) {
         if (next_is_upper)
-            builder.append_code_point(to_ascii_uppercase(ch));
+            builder.append(to_ascii_uppercase(ch));
         else
-            builder.append_code_point(to_ascii_lowercase(ch));
+            builder.append(to_ascii_lowercase(ch));
         next_is_upper = ch == ' ';
     }
 
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
-String replace(StringView str, StringView needle, StringView replacement, bool all_occurrences)
+ByteString invert_case(StringView str)
+{
+    StringBuilder builder(str.length());
+
+    for (auto ch : str) {
+        if (is_ascii_lower_alpha(ch))
+            builder.append(to_ascii_uppercase(ch));
+        else
+            builder.append(to_ascii_lowercase(ch));
+    }
+
+    return builder.to_byte_string();
+}
+
+// Finishes the replacing algorithm once it is known that ita least one
+// replacemnet is going to be done. Otherwise the caller may want to follow a
+// different route to construct its output.
+static StringBuilder replace_into_builder(StringView str, StringView needle, StringView replacement, ReplaceMode replace_mode, size_t first_replacement_position)
+{
+    StringBuilder replaced_string;
+
+    replaced_string.append(str.substring_view(0, first_replacement_position));
+    replaced_string.append(replacement);
+
+    StringView remaining = str.substring_view(first_replacement_position + needle.length());
+
+    switch (replace_mode) {
+    case ReplaceMode::All:
+        while (!remaining.is_empty()) {
+            auto maybe_pos = remaining.find(needle);
+            if (!maybe_pos.has_value())
+                break;
+            replaced_string.append(remaining.substring_view(0, *maybe_pos));
+            replaced_string.append(replacement);
+            remaining = remaining.substring_view(*maybe_pos + needle.length());
+        }
+        break;
+    case ReplaceMode::FirstOnly:
+        // We already made the first replacement.
+        break;
+    }
+
+    // The remaining bits either don't contain the needle or are ignored due to
+    // `replace_mode` being `ReplaceMode::FirstOnly`.
+    replaced_string.append(remaining);
+
+    return replaced_string;
+}
+
+ByteString replace(StringView str, StringView needle, StringView replacement,
+    ReplaceMode replace_mode)
 {
     if (str.is_empty())
         return str;
 
-    Vector<size_t> positions;
-    if (all_occurrences) {
-        positions = str.find_all(needle);
-        if (!positions.size())
-            return str;
-    } else {
-        auto pos = str.find(needle);
-        if (!pos.has_value())
-            return str;
-        positions.append(pos.value());
-    }
+    auto maybe_first = str.find(needle);
+    if (!maybe_first.has_value())
+        return str;
 
-    StringBuilder replaced_string;
-    size_t last_position = 0;
-    for (auto& position : positions) {
-        replaced_string.append(str.substring_view(last_position, position - last_position));
-        replaced_string.append(replacement);
-        last_position = position + needle.length();
-    }
-    replaced_string.append(str.substring_view(last_position, str.length() - last_position));
-    return replaced_string.build();
+    auto resulting_builder = replace_into_builder(str, needle, replacement, replace_mode, *maybe_first);
+    return resulting_builder.to_byte_string();
+}
+
+ErrorOr<String> replace(String const& haystack, StringView needle, StringView replacement, ReplaceMode replace_mode)
+{
+    if (haystack.is_empty())
+        return haystack;
+
+    auto const source_bytes = haystack.bytes_as_string_view();
+
+    auto maybe_first = source_bytes.find(needle);
+    if (!maybe_first.has_value())
+        return haystack;
+
+    auto resulting_builder = replace_into_builder(source_bytes, needle, replacement, replace_mode, *maybe_first);
+    return resulting_builder.to_string();
 }
 #endif
 
@@ -500,6 +600,16 @@ size_t count(StringView str, StringView needle)
     size_t count = 0;
     for (size_t i = 0; i < str.length() - needle.length() + 1; ++i) {
         if (str.substring_view(i).starts_with(needle))
+            count++;
+    }
+    return count;
+}
+
+size_t count(StringView str, char needle)
+{
+    size_t count = 0;
+    for (size_t i = 0; i < str.length(); ++i) {
+        if (str[i] == needle)
             count++;
     }
     return count;

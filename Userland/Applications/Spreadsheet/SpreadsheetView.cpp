@@ -7,7 +7,6 @@
 #include "SpreadsheetView.h"
 #include "CellTypeDialog.h"
 #include <AK/ScopeGuard.h>
-#include <AK/URL.h>
 #include <LibCore/MimeData.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/HeaderView.h>
@@ -17,12 +16,13 @@
 #include <LibGUI/Scrollbar.h>
 #include <LibGUI/TableView.h>
 #include <LibGfx/Palette.h>
+#include <LibURL/URL.h>
 
 namespace Spreadsheet {
 
 void SpreadsheetView::EditingDelegate::set_value(GUI::Variant const& value, GUI::ModelEditingDelegate::SelectionBehavior selection_behavior)
 {
-    if (value.as_string().is_null()) {
+    if (!value.is_valid()) {
         StringModelEditingDelegate::set_value("", selection_behavior);
         commit();
         return;
@@ -32,7 +32,7 @@ void SpreadsheetView::EditingDelegate::set_value(GUI::Variant const& value, GUI:
         return StringModelEditingDelegate::set_value(value, selection_behavior);
 
     m_has_set_initial_value = true;
-    const auto option = m_sheet.at({ (size_t)index().column(), (size_t)index().row() });
+    auto const option = m_sheet.at({ (size_t)index().column(), (size_t)index().row() });
     if (option)
         return StringModelEditingDelegate::set_value(option->source(), selection_behavior);
 
@@ -76,6 +76,16 @@ void InfinitelyScrollableTableView::mousemove_event(GUI::MouseEvent& event)
         auto& sheet = static_cast<SheetModel&>(*model).sheet();
         sheet.disable_updates();
         ScopeGuard sheet_update_enabler { [&] { sheet.enable_updates(); } };
+
+        if (!is_dragging()) {
+            auto tooltip = model->data(index, static_cast<GUI::ModelRole>(SheetModel::Role::Tooltip));
+            if (tooltip.is_string()) {
+                set_tooltip(MUST(String::from_byte_string(tooltip.as_string())));
+                show_or_hide_tooltip();
+            } else {
+                set_tooltip({});
+            }
+        }
 
         m_is_hovering_cut_zone = false;
         m_is_hovering_extend_zone = false;
@@ -192,9 +202,9 @@ void InfinitelyScrollableTableView::mousemove_event(GUI::MouseEvent& event)
 
 void InfinitelyScrollableTableView::mousedown_event(GUI::MouseEvent& event)
 {
-    // Override the mouse event so that the the cell that is 'clicked' is not
+    // Override the mouse event so that the cell that is 'clicked' is not
     // the one right beneath the cursor but instead the one that is referred to
-    // when m_is_hovering_cut_zone as it can be the case that the user is targetting
+    // when m_is_hovering_cut_zone as it can be the case that the user is targeting
     // a cell yet be outside of its bounding box due to the select_padding.
     if (m_is_hovering_cut_zone || m_is_hovering_extend_zone) {
         if (m_is_hovering_cut_zone)
@@ -202,7 +212,7 @@ void InfinitelyScrollableTableView::mousedown_event(GUI::MouseEvent& event)
         else if (m_is_hovering_extend_zone)
             m_is_dragging_for_extend = true;
         auto rect = content_rect_minus_scrollbars(m_target_cell);
-        GUI::MouseEvent adjusted_event = { (GUI::Event::Type)event.type(), rect.center(), event.buttons(), event.button(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y() };
+        GUI::MouseEvent adjusted_event = { (GUI::Event::Type)event.type(), rect.center(), event.buttons(), event.button(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y(), event.wheel_raw_delta_x(), event.wheel_raw_delta_y() };
         AbstractTableView::mousedown_event(adjusted_event);
     } else {
         AbstractTableView::mousedown_event(event);
@@ -220,6 +230,7 @@ void InfinitelyScrollableTableView::mouseup_event(GUI::MouseEvent& event)
         Vector<Position> from;
         Position position { (size_t)m_target_cell.column(), (size_t)m_target_cell.row() };
         from.append(position);
+        Vector<CellChange> cell_changes;
         selection().for_each_index([&](auto& index) {
             if (index == m_starting_selection_index)
                 return;
@@ -227,8 +238,11 @@ void InfinitelyScrollableTableView::mouseup_event(GUI::MouseEvent& event)
             Vector<Position> to;
             Position position { (size_t)index.column(), (size_t)index.row() };
             to.append(position);
-            sheet.copy_cells(from, to);
+            auto cell_change = sheet.copy_cells(from, to);
+            cell_changes.extend(cell_change);
         });
+        if (static_cast<SheetModel&>(*this->model()).on_cells_data_change)
+            static_cast<SheetModel&>(*this->model()).on_cells_data_change(cell_changes);
         update();
     }
 
@@ -239,7 +253,7 @@ void InfinitelyScrollableTableView::mouseup_event(GUI::MouseEvent& event)
     m_has_committed_to_extending = false;
     if (m_is_hovering_cut_zone || m_is_hovering_extend_zone) {
         auto rect = content_rect_minus_scrollbars(m_target_cell);
-        GUI::MouseEvent adjusted_event = { (GUI::Event::Type)event.type(), rect.center(), event.buttons(), event.button(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y() };
+        GUI::MouseEvent adjusted_event = { (GUI::Event::Type)event.type(), rect.center(), event.buttons(), event.button(), event.modifiers(), event.wheel_delta_x(), event.wheel_delta_y(), event.wheel_raw_delta_x(), event.wheel_raw_delta_y() };
         TableView::mouseup_event(adjusted_event);
     } else {
         TableView::mouseup_event(event);
@@ -291,7 +305,7 @@ SpreadsheetView::SpreadsheetView(Sheet& sheet)
     : m_sheet(sheet)
     , m_sheet_model(SheetModel::create(*m_sheet))
 {
-    set_layout<GUI::VerticalBoxLayout>().set_margins(2);
+    set_layout<GUI::VerticalBoxLayout>(2);
     m_table_view = add<InfinitelyScrollableTableView>();
     m_table_view->set_grid_style(GUI::TableView::GridStyle::Both);
     m_table_view->set_selection_behavior(GUI::AbstractView::SelectionBehavior::SelectItems);
@@ -374,7 +388,7 @@ SpreadsheetView::SpreadsheetView(Sheet& sheet)
     };
 
     m_cell_range_context_menu = GUI::Menu::construct();
-    m_cell_range_context_menu->add_action(GUI::Action::create("Type and Formatting...", [this](auto&) {
+    m_cell_range_context_menu->add_action(GUI::Action::create("Format...", [this](auto&) {
         Vector<Position> positions;
         for (auto& index : m_table_view->selection().indices()) {
             Position position { (size_t)index.column(), (size_t)index.row() };
@@ -388,7 +402,7 @@ SpreadsheetView::SpreadsheetView(Sheet& sheet)
         }
 
         auto dialog = CellTypeDialog::construct(positions, *m_sheet, window());
-        if (dialog->exec() == GUI::Dialog::ExecOK) {
+        if (dialog->exec() == GUI::Dialog::ExecResult::OK) {
             for (auto& position : positions) {
                 auto& cell = m_sheet->ensure(position);
                 cell.set_type(dialog->type());
@@ -406,12 +420,12 @@ SpreadsheetView::SpreadsheetView(Sheet& sheet)
 
         ScopeGuard update_after_drop { [this] { update(); } };
 
-        if (event.mime_data().has_format("text/x-spreadsheet-data")) {
-            auto const& data = event.mime_data().data("text/x-spreadsheet-data");
+        if (event.mime_data().has_format("text/x-spreadsheet-data"sv)) {
+            auto const& data = event.mime_data().data("text/x-spreadsheet-data"sv);
             StringView urls { data.data(), data.size() };
             Vector<Position> source_positions, target_positions;
 
-            for (auto& line : urls.lines(false)) {
+            for (auto& line : urls.lines(StringView::ConsiderCarriageReturn::No)) {
                 auto position = m_sheet->position_from_url(line);
                 if (position.has_value())
                     source_positions.append(position.release_value());
@@ -425,7 +439,9 @@ SpreadsheetView::SpreadsheetView(Sheet& sheet)
                 return;
 
             auto first_position = source_positions.take_first();
-            m_sheet->copy_cells(move(source_positions), move(target_positions), first_position, Spreadsheet::Sheet::CopyOperation::Cut);
+            auto cell_changes = m_sheet->copy_cells(move(source_positions), move(target_positions), first_position, Spreadsheet::Sheet::CopyOperation::Cut);
+            if (model()->on_cells_data_change)
+                model()->on_cells_data_change(cell_changes);
 
             return;
         }
@@ -461,7 +477,7 @@ void SpreadsheetView::move_cursor(GUI::AbstractView::CursorMovement direction)
     m_table_view->move_cursor(direction, GUI::AbstractView::SelectionUpdate::Set);
 }
 
-void SpreadsheetView::TableCellPainter::paint(GUI::Painter& painter, const Gfx::IntRect& rect, const Gfx::Palette& palette, const GUI::ModelIndex& index)
+void SpreadsheetView::TableCellPainter::paint(GUI::Painter& painter, Gfx::IntRect const& rect, Gfx::Palette const& palette, const GUI::ModelIndex& index)
 {
     // Draw a border.
     // Undo the horizontal padding done by the table view...
@@ -479,7 +495,7 @@ void SpreadsheetView::TableCellPainter::paint(GUI::Painter& painter, const Gfx::
     auto text_color = index.data(GUI::ModelRole::ForegroundColor).to_color(palette.color(m_table_view.foreground_role()));
     auto data = index.data();
     auto text_alignment = index.data(GUI::ModelRole::TextAlignment).to_text_alignment(Gfx::TextAlignment::CenterRight);
-    painter.draw_text(rect, data.to_string(), m_table_view.font_for_index(index), text_alignment, text_color, Gfx::TextElision::Right);
+    painter.draw_text(rect, data.to_byte_string(), m_table_view.font_for_index(index), text_alignment, text_color, Gfx::TextElision::Right);
 }
 
 }

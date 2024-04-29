@@ -13,7 +13,7 @@
 #include <LibVT/XtermColors.h>
 
 #ifndef KERNEL
-#    include <AK/String.h>
+#    include <AK/ByteString.h>
 #endif
 
 namespace VT {
@@ -37,8 +37,8 @@ struct Attribute {
     Color background_color { default_background_color };
 
 #ifndef KERNEL
-    String href;
-    String href_id;
+    ByteString href;
+    Optional<ByteString> href_id;
 #endif
 
     enum class Flags : u8 {
@@ -59,13 +59,9 @@ struct Attribute {
 
     Flags flags { Flags::NoAttributes };
 
-    constexpr bool operator==(const Attribute& other) const
+    constexpr bool operator==(Attribute const& other) const
     {
         return foreground_color == other.foreground_color && background_color == other.background_color && flags == other.flags;
-    }
-    constexpr bool operator!=(const Attribute& other) const
-    {
-        return !(*this == other);
     }
 };
 

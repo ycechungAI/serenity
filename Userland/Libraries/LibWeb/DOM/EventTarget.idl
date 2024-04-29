@@ -1,6 +1,10 @@
 #import <DOM/AbortSignal.idl>
 
+// https://dom.spec.whatwg.org/#eventtarget
+[Exposed=*]
 interface EventTarget {
+
+    constructor();
 
     undefined addEventListener(DOMString type, EventListener? callback, optional (AddEventListenerOptions or boolean) options = {});
     undefined removeEventListener(DOMString type, EventListener? callback, optional (EventListenerOptions or boolean) options = {});

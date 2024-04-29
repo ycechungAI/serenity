@@ -1,10 +1,8 @@
-# Patches for angband
+# Patches for angband on SerenityOS
 
-## `use-sdl2-config.patch`
+## `0001-Disable-hardware-acceleration.patch`
 
-Replaces uses of the system `sdl2-config` with the one from serenity.
+Disable hardware acceleration
 
-## `disable-accelerated-rendering.patch`
-
-Disable SDL2 hardware acceleration as we do not support that.
+We don't support this, so disable it.
 

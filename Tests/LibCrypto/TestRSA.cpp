@@ -4,13 +4,14 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibCrypto/ASN1/PEM.h>
 #include <LibCrypto/Hash/SHA2.h>
 #include <LibCrypto/PK/PK.h>
 #include <LibCrypto/PK/RSA.h>
 #include <LibTest/TestCase.h>
 #include <cstring>
 
-static ByteBuffer operator""_b(const char* string, size_t length)
+static ByteBuffer operator""_b(char const* string, size_t length)
 {
     return ByteBuffer::copy(string, length).release_value();
 }
@@ -55,7 +56,7 @@ joNOYoR5R9z5oX2cpcyykQ58FC2vKKg+x8N6xczG7qO95tw5UQIhAN354CP/FA+uTeJ6KJ+i
 zCBCl58CjNCzO0s5HTc56el5AiEAsvPKXo5/9gS/S4UzDRP6abq7GreixTfjR8LXidk3FL8C
 IQCTjYI861Y+hjMnlORkGSdvWlTHUj6gjEOh4TlWeJzQoQIgAxMZOQKtxCZUuxFwzRq4xLRG
 nrDlBQpuxz7bwSyQO7UCIHrYMnDohgNbwtA5ZpW3H1cKKQQvueWm6sxW9P5sUrZ3
------END RSA PRIVATE KEY-----)";
+-----END RSA PRIVATE KEY-----)"sv;
 
     Crypto::PK::RSA rsa(privkey);
     if (rsa.public_key().public_exponent() != 65537) {
@@ -96,7 +97,7 @@ o+7RC7iOkO+rnzTXwxBSBpXMiUTAIx/hrdfPVxQT+wKBgCh7N3OLIOH6EWcW1fif
 UoENh8rkt/kzm89G1JLwBhuBIBPXUEZt2dS/xSUempqVqFGONpP87gvqxkMTtgCA
 73KXn/cxHWM2kmXyHA3kQlOYw6WHjpldQAxLE+TRHXO2JUtZ09Mu4rVXX7lmwbTm
 l3vmuDEF3/Bo1C1HTg0xRV/l
------END PRIVATE KEY-----)";
+-----END PRIVATE KEY-----)"sv;
 
     Crypto::PK::RSA rsa(privkey);
     if (rsa.public_key().public_exponent() != 65537) {
@@ -106,6 +107,44 @@ l3vmuDEF3/Bo1C1HTg0xRV/l
     if (rsa.private_key().private_exponent() != "16848664331299797559656678180469464902267415922431923391961407795209879741791261105581093539484181644099608161661780611501562625272630894063592208758992911105496755004417051031019663332258403844985328863382168329621318366311519850803972480500782200178279692319955495383119697563295214236936264406600739633470565823022975212999060908747002623721589308539473108154612454595201561671949550531384574873324370774408913092560971930541734744950937900805812300970883306404011323308000168926094053141613790857814489531436452649384151085451448183385611208320292948291211969430321231180227006521681776197974694030147965578466993"_bigint) {
         FAIL("Invalid private exponent");
     }
+}
+
+TEST_CASE(test_RSA_keygen_enc)
+{
+    auto keypem = R"(-----BEGIN PRIVATE KEY-----
+MIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEA5HMXMnY+RhEcYXsa
+OyB/YkcrO1nxIeyDCMqwg5MDrSXO8vPXSEb9AZUNMF1jKiFWPoHxZ+foRxrLv4d9
+sV/ETwIDAQABAkBpC37UJkjWQRHyxP83xuasExuO6/mT5sQN692kcppTJ9wHNWoD
+9ZcREk4GGiklu4qx48/fYt8Cv6z6JuQ0ZQExAiEA9XRZVUnCJ2xOcCFCbyIF+d3F
+9Kht5rR77F9KsRlgUbkCIQDuQ7YzLpQ8V8BJwKbDeXw1vQvcPEnyKnTOoALpF6bq
+RwIhAIDSm8Ajgf7m3RQEoLVrCe/l8WtCqsuWliOsr6rbQq4hAiEAx8R16wvOtZlN
+W4jvSU1+WwAaBZl21lfKf8OhLRXrmNkCIG9IRdcSiNR/Ut8QfD3N9Bb1HsUm+Bvz
+c8yGzl89pYST
+-----END PRIVATE KEY-----
+)"sv;
+    auto decoded = Crypto::decode_pem(keypem.bytes());
+    auto keypair = Crypto::PK::RSA::parse_rsa_key(decoded);
+    auto priv_der = MUST(keypair.private_key.export_as_der());
+    auto rsa_encryption_oid = Array<int, 7> { 1, 2, 840, 113549, 1, 1, 1 };
+    auto wrapped_priv_der = MUST(Crypto::PK::wrap_in_private_key_info(keypair.private_key, rsa_encryption_oid));
+    auto priv_pem = MUST(Crypto::encode_pem(wrapped_priv_der, Crypto::PEMType::PrivateKey));
+    auto rsa_from_pair = Crypto::PK::RSA(keypair.public_key, keypair.private_key);
+    auto rsa_from_pem = Crypto::PK::RSA(priv_pem);
+
+    EXPECT_EQ(keypem, StringView(priv_pem));
+
+    u8 enc_buffer[rsa_from_pair.output_size()];
+    u8 dec_buffer[rsa_from_pair.output_size()];
+
+    auto enc = Bytes { enc_buffer, rsa_from_pair.output_size() };
+    auto dec = Bytes { dec_buffer, rsa_from_pair.output_size() };
+
+    dec.overwrite(0, "WellHelloFriends", 16);
+
+    rsa_from_pair.encrypt(dec, enc);
+    rsa_from_pem.decrypt(enc, dec);
+
+    EXPECT_EQ(memcmp(dec.data(), "WellHelloFriends", 16), 0);
 }
 
 TEST_CASE(test_RSA_encrypt_decrypt)
@@ -127,11 +166,4 @@ TEST_CASE(test_RSA_encrypt_decrypt)
     rsa.decrypt(dec, enc);
 
     EXPECT(memcmp(enc.data(), "WellHelloFriendsWellHelloFriendsWellHelloFriendsWellHelloFriends", 64) == 0);
-}
-
-TEST_CASE(test_RSA_EMSA_PSS_construction)
-{
-    // This is a template validity test
-    Crypto::PK::RSA rsa;
-    Crypto::PK::RSA_EMSA_PSS<Crypto::Hash::SHA256> rsa_esma_pss(rsa);
 }

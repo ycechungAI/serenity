@@ -4,19 +4,19 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/Heap/kmalloc.h>
+#include <Kernel/Interrupts/InterruptDisabler.h>
+#include <Kernel/Library/StdLib.h>
 #include <Kernel/Net/EtherType.h>
 #include <Kernel/Net/NetworkAdapter.h>
 #include <Kernel/Net/NetworkingManagement.h>
-#include <Kernel/Process.h>
-#include <Kernel/StdLib.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
-NetworkAdapter::NetworkAdapter(NonnullOwnPtr<KString> interface_name)
-    : m_name(move(interface_name))
+NetworkAdapter::NetworkAdapter(StringView interface_name)
 {
+    m_name.store_characters(interface_name);
 }
 
 NetworkAdapter::~NetworkAdapter() = default;
@@ -28,7 +28,7 @@ void NetworkAdapter::send_packet(ReadonlyBytes packet)
     send_raw(packet);
 }
 
-void NetworkAdapter::send(const MACAddress& destination, const ARPPacket& packet)
+void NetworkAdapter::send(MACAddress const& destination, ARPPacket const& packet)
 {
     size_t size_in_bytes = sizeof(EthernetFrameHeader) + sizeof(ARPPacket);
     auto buffer_result = NetworkByteBuffer::create_zeroed(size_in_bytes);
@@ -41,7 +41,7 @@ void NetworkAdapter::send(const MACAddress& destination, const ARPPacket& packet
     eth->set_destination(destination);
     eth->set_ether_type(EtherType::ARP);
     memcpy(eth->payload(), &packet, sizeof(ARPPacket));
-    send_packet({ (const u8*)eth, size_in_bytes });
+    send_packet({ (u8 const*)eth, size_in_bytes });
 }
 
 void NetworkAdapter::fill_in_ipv4_header(PacketWithTimestamp& packet, IPv4Address const& source_ipv4, MACAddress const& destination_mac, IPv4Address const& destination_ipv4, IPv4Protocol protocol, size_t payload_size, u8 type_of_service, u8 ttl)
@@ -63,7 +63,7 @@ void NetworkAdapter::fill_in_ipv4_header(PacketWithTimestamp& packet, IPv4Addres
     ipv4.set_source(source_ipv4);
     ipv4.set_destination(destination_ipv4);
     ipv4.set_protocol((u8)protocol);
-    ipv4.set_length(sizeof(IPv4Packet) + payload_size);
+    ipv4.set_length(ipv4_packet_size);
     ipv4.set_ident(1);
     ipv4.set_ttl(ttl);
     ipv4.set_checksum(ipv4.compute_checksum());
@@ -95,7 +95,7 @@ void NetworkAdapter::did_receive(ReadonlyBytes payload)
         on_receive();
 }
 
-size_t NetworkAdapter::dequeue_packet(u8* buffer, size_t buffer_size, Time& packet_timestamp)
+size_t NetworkAdapter::dequeue_packet(u8* buffer, size_t buffer_size, UnixDateTime& packet_timestamp)
 {
     InterruptDisabler disabler;
     if (m_packet_queue.is_empty())
@@ -113,27 +113,26 @@ size_t NetworkAdapter::dequeue_packet(u8* buffer, size_t buffer_size, Time& pack
 
 RefPtr<PacketWithTimestamp> NetworkAdapter::acquire_packet_buffer(size_t size)
 {
-    InterruptDisabler disabler;
-    if (m_unused_packets.is_empty()) {
-        auto buffer_or_error = KBuffer::try_create_with_size(size, Memory::Region::Access::ReadWrite, "Packet Buffer", AllocationStrategy::AllocateNow);
-        if (buffer_or_error.is_error())
-            return {};
-        auto buffer = buffer_or_error.release_value();
-        auto packet = adopt_ref_if_nonnull(new (nothrow) PacketWithTimestamp { move(buffer), kgettimeofday() });
-        if (!packet)
-            return {};
-        packet->buffer->set_size(size);
-        return packet;
-    }
+    auto packet = m_unused_packets.with([size](auto& unused_packets) -> RefPtr<PacketWithTimestamp> {
+        if (unused_packets.is_empty())
+            return nullptr;
 
-    auto packet = m_unused_packets.take_first();
-    if (packet->buffer->capacity() >= size) {
+        auto unused_packet = unused_packets.take_first();
+
+        if (unused_packet->buffer->capacity() >= size)
+            return unused_packet;
+
+        unused_packets.append(*unused_packet);
+        return nullptr;
+    });
+
+    if (packet) {
         packet->timestamp = kgettimeofday();
         packet->buffer->set_size(size);
         return packet;
     }
 
-    auto buffer_or_error = KBuffer::try_create_with_size(size, Memory::Region::Access::ReadWrite, "Packet Buffer", AllocationStrategy::AllocateNow);
+    auto buffer_or_error = KBuffer::try_create_with_size("NetworkAdapter: Packet buffer"sv, size, Memory::Region::Access::ReadWrite, AllocationStrategy::AllocateNow);
     if (buffer_or_error.is_error())
         return {};
     packet = adopt_ref_if_nonnull(new (nothrow) PacketWithTimestamp { buffer_or_error.release_value(), kgettimeofday() });
@@ -145,23 +144,19 @@ RefPtr<PacketWithTimestamp> NetworkAdapter::acquire_packet_buffer(size_t size)
 
 void NetworkAdapter::release_packet_buffer(PacketWithTimestamp& packet)
 {
-    InterruptDisabler disabler;
-    m_unused_packets.append(packet);
+    m_unused_packets.with([&packet](auto& unused_packets) {
+        unused_packets.append(packet);
+    });
 }
 
-void NetworkAdapter::set_ipv4_address(const IPv4Address& address)
+void NetworkAdapter::set_ipv4_address(IPv4Address const& address)
 {
     m_ipv4_address = address;
 }
 
-void NetworkAdapter::set_ipv4_netmask(const IPv4Address& netmask)
+void NetworkAdapter::set_ipv4_netmask(IPv4Address const& netmask)
 {
     m_ipv4_netmask = netmask;
-}
-
-void NetworkAdapter::set_ipv4_gateway(const IPv4Address& gateway)
-{
-    m_ipv4_gateway = gateway;
 }
 
 }

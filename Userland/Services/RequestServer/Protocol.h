@@ -7,30 +7,33 @@
 #pragma once
 
 #include <AK/RefPtr.h>
-#include <AK/URL.h>
+#include <LibCore/Proxy.h>
+#include <LibURL/URL.h>
 #include <RequestServer/Forward.h>
 
 namespace RequestServer {
 
 class Protocol {
 public:
-    virtual ~Protocol();
+    virtual ~Protocol() = default;
 
-    const String& name() const { return m_name; }
-    virtual OwnPtr<Request> start_request(ConnectionFromClient&, const String& method, const URL&, const HashMap<String, String>& headers, ReadonlyBytes body) = 0;
+    ByteString const& name() const { return m_name; }
+    virtual OwnPtr<Request> start_request(i32, ConnectionFromClient&, ByteString const& method, const URL::URL&, HashMap<ByteString, ByteString> const& headers, ReadonlyBytes body, Core::ProxyData proxy_data = {}) = 0;
 
-    static Protocol* find_by_name(const String&);
+    static Protocol* find_by_name(ByteString const&);
 
 protected:
-    explicit Protocol(const String& name);
+    explicit Protocol(ByteString const& name);
     struct Pipe {
         int read_fd { -1 };
         int write_fd { -1 };
     };
     static ErrorOr<Pipe> get_pipe_for_request();
 
+    static void install(NonnullOwnPtr<Protocol>);
+
 private:
-    String m_name;
+    ByteString m_name;
 };
 
 }

@@ -8,9 +8,11 @@
 
 namespace Web::Painting {
 
-NonnullRefPtr<CanvasPaintable> CanvasPaintable::create(Layout::CanvasBox const& layout_box)
+JS_DEFINE_ALLOCATOR(CanvasPaintable);
+
+JS::NonnullGCPtr<CanvasPaintable> CanvasPaintable::create(Layout::CanvasBox const& layout_box)
 {
-    return adopt_ref(*new CanvasPaintable(layout_box));
+    return layout_box.heap().allocate_without_realm<CanvasPaintable>(layout_box);
 }
 
 CanvasPaintable::CanvasPaintable(Layout::CanvasBox const& layout_box)
@@ -25,18 +27,21 @@ Layout::CanvasBox const& CanvasPaintable::layout_box() const
 
 void CanvasPaintable::paint(PaintContext& context, PaintPhase phase) const
 {
-    if (!layout_box().is_visible())
+    if (!is_visible())
         return;
 
     PaintableBox::paint(context, phase);
 
     if (phase == PaintPhase::Foreground) {
-        // FIXME: This should be done at a different level. Also rect() does not include padding etc!
-        if (!context.viewport_rect().intersects(enclosing_int_rect(absolute_rect())))
-            return;
+        auto canvas_rect = context.rounded_device_rect(absolute_rect());
+        ScopedCornerRadiusClip corner_clip { context, canvas_rect, normalized_border_radii_data(ShrinkRadiiForBorders::Yes) };
 
-        if (layout_box().dom_node().bitmap())
-            context.painter().draw_scaled_bitmap(absolute_rect().to_rounded<int>(), *layout_box().dom_node().bitmap(), layout_box().dom_node().bitmap()->rect(), 1.0f, to_gfx_scaling_mode(computed_values().image_rendering()));
+        if (layout_box().dom_node().bitmap()) {
+            // FIXME: Remove this const_cast.
+            const_cast<HTML::HTMLCanvasElement&>(layout_box().dom_node()).present();
+            auto scaling_mode = to_gfx_scaling_mode(computed_values().image_rendering(), layout_box().dom_node().bitmap()->rect(), canvas_rect.to_type<int>());
+            context.recording_painter().draw_scaled_bitmap(canvas_rect.to_type<int>(), *layout_box().dom_node().bitmap(), layout_box().dom_node().bitmap()->rect(), scaling_mode);
+        }
     }
 }
 

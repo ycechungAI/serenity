@@ -11,8 +11,7 @@
 #include <AK/Span.h>
 #include <AK/Types.h>
 
-namespace Crypto {
-namespace Cipher {
+namespace Crypto::Cipher {
 
 enum class Intent {
     Encryption,
@@ -43,7 +42,7 @@ public:
     virtual ReadonlyBytes bytes() const = 0;
 
     virtual void overwrite(ReadonlyBytes) = 0;
-    virtual void overwrite(const u8* data, size_t size) { overwrite({ data, size }); }
+    virtual void overwrite(u8 const* data, size_t size) { overwrite({ data, size }); }
 
     virtual void apply_initialization_vector(ReadonlyBytes ivec) = 0;
 
@@ -81,7 +80,7 @@ private:
 
 struct CipherKey {
     virtual ReadonlyBytes bytes() const = 0;
-    static bool is_valid_key_size(size_t) { return false; };
+    static bool is_valid_key_size(size_t) { return false; }
 
     virtual ~CipherKey() = default;
 
@@ -97,23 +96,23 @@ public:
     using KeyType = KeyT;
     using BlockType = BlockT;
 
-    explicit Cipher<KeyT, BlockT>(PaddingMode mode)
+    explicit Cipher(PaddingMode mode)
         : m_padding_mode(mode)
     {
     }
 
-    virtual const KeyType& key() const = 0;
+    virtual KeyType const& key() const = 0;
     virtual KeyType& key() = 0;
 
     constexpr static size_t block_size() { return BlockType::block_size(); }
 
     PaddingMode padding_mode() const { return m_padding_mode; }
 
-    virtual void encrypt_block(const BlockType& in, BlockType& out) = 0;
-    virtual void decrypt_block(const BlockType& in, BlockType& out) = 0;
+    virtual void encrypt_block(BlockType const& in, BlockType& out) = 0;
+    virtual void decrypt_block(BlockType const& in, BlockType& out) = 0;
 
 #ifndef KERNEL
-    virtual String class_name() const = 0;
+    virtual ByteString class_name() const = 0;
 #endif
 
 protected:
@@ -122,5 +121,4 @@ protected:
 private:
     PaddingMode m_padding_mode;
 };
-}
 }

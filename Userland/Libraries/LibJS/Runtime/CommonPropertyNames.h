@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
+#include <AK/DeprecatedFlyString.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Runtime/PropertyKey.h>
 
@@ -18,6 +18,15 @@ namespace JS {
     P(__defineSetter__)                      \
     P(__lookupGetter__)                      \
     P(__lookupSetter__)                      \
+    P($1)                                    \
+    P($2)                                    \
+    P($3)                                    \
+    P($4)                                    \
+    P($5)                                    \
+    P($6)                                    \
+    P($7)                                    \
+    P($8)                                    \
+    P($9)                                    \
     P(Atomics)                               \
     P(BYTES_PER_ELEMENT)                     \
     P(BigInt)                                \
@@ -56,6 +65,7 @@ namespace JS {
     P(acos)                                  \
     P(acosh)                                 \
     P(add)                                   \
+    P(adopt)                                 \
     P(all)                                   \
     P(allSettled)                            \
     P(anchor)                                \
@@ -100,6 +110,8 @@ namespace JS {
     P(compactDisplay)                        \
     P(compareExchange)                       \
     P(compile)                               \
+    P(composite)                             \
+    P(computedOffset)                        \
     P(concat)                                \
     P(configurable)                          \
     P(console)                               \
@@ -125,20 +137,29 @@ namespace JS {
     P(dayOfYear)                             \
     P(dayPeriod)                             \
     P(days)                                  \
+    P(daysDisplay)                           \
     P(daysInMonth)                           \
     P(daysInWeek)                            \
     P(daysInYear)                            \
     P(debug)                                 \
     P(decodeURI)                             \
     P(decodeURIComponent)                    \
+    P(defer)                                 \
     P(defineProperties)                      \
     P(defineProperty)                        \
     P(deleteProperty)                        \
     P(deref)                                 \
     P(description)                           \
+    P(detached)                              \
+    P(difference)                            \
+    P(dir)                                   \
+    P(direction)                             \
     P(disambiguation)                        \
+    P(disposed)                              \
     P(done)                                  \
     P(dotAll)                                \
+    P(drop)                                  \
+    P(easing)                                \
     P(encodeURI)                             \
     P(encodeURIComponent)                    \
     P(endsWith)                              \
@@ -170,6 +191,8 @@ namespace JS {
     P(findLast)                              \
     P(findLastIndex)                         \
     P(findIndex)                             \
+    P(firstDay)                              \
+    P(firstDayOfWeek)                        \
     P(fixed)                                 \
     P(flags)                                 \
     P(flat)                                  \
@@ -183,9 +206,11 @@ namespace JS {
     P(formatRange)                           \
     P(formatRangeToParts)                    \
     P(formatToParts)                         \
+    P(fractionalDigits)                      \
     P(fractionalSecondDigits)                \
     P(freeze)                                \
     P(from)                                  \
+    P(fromAsync)                             \
     P(fromCharCode)                          \
     P(fromCodePoint)                         \
     P(fromEntries)                           \
@@ -198,12 +223,15 @@ namespace JS {
     P(get)                                   \
     P(getBigInt64)                           \
     P(getBigUint64)                          \
+    P(getCalendars)                          \
     P(getCanonicalLocales)                   \
+    P(getCollations)                         \
     P(getDate)                               \
     P(getDay)                                \
     P(getFloat32)                            \
     P(getFloat64)                            \
     P(getFullYear)                           \
+    P(getHourCycles)                         \
     P(getHours)                              \
     P(getInstantFor)                         \
     P(getInt8)                               \
@@ -214,6 +242,7 @@ namespace JS {
     P(getMinutes)                            \
     P(getMonth)                              \
     P(getNextTransition)                     \
+    P(getNumberingSystems)                   \
     P(getOffsetNanosecondsFor)               \
     P(getOffsetStringFor)                    \
     P(getOwnPropertyDescriptor)              \
@@ -225,8 +254,10 @@ namespace JS {
     P(getPreviousTransition)                 \
     P(getPrototypeOf)                        \
     P(getSeconds)                            \
+    P(getTextInfo)                           \
     P(getTime)                               \
     P(getTimezoneOffset)                     \
+    P(getTimeZones)                          \
     P(getUint8)                              \
     P(getUint16)                             \
     P(getUint32)                             \
@@ -238,13 +269,13 @@ namespace JS {
     P(getUTCMinutes)                         \
     P(getUTCMonth)                           \
     P(getUTCSeconds)                         \
+    P(getWeekInfo)                           \
     P(getYear)                               \
     P(global)                                \
     P(globalThis)                            \
     P(granularity)                           \
     P(group)                                 \
     P(groupBy)                               \
-    P(groupByToMap)                          \
     P(groupCollapsed)                        \
     P(groupEnd)                              \
     P(groups)                                \
@@ -256,6 +287,7 @@ namespace JS {
     P(hour12)                                \
     P(hourCycle)                             \
     P(hours)                                 \
+    P(hoursDisplay)                          \
     P(hoursInDay)                            \
     P(hypot)                                 \
     P(id)                                    \
@@ -271,8 +303,10 @@ namespace JS {
     P(inLeapYear)                            \
     P(input)                                 \
     P(instant)                               \
+    P(intersection)                          \
     P(is)                                    \
     P(isArray)                               \
+    P(isDisjointFrom)                        \
     P(isExtensible)                          \
     P(isFinite)                              \
     P(isFrozen)                              \
@@ -282,6 +316,8 @@ namespace JS {
     P(isPrototypeOf)                         \
     P(isSafeInteger)                         \
     P(isSealed)                              \
+    P(isSubsetOf)                            \
+    P(isSupersetOf)                          \
     P(isView)                                \
     P(isoDay)                                \
     P(isoHour)                               \
@@ -292,6 +328,7 @@ namespace JS {
     P(isoNanosecond)                         \
     P(isoSecond)                             \
     P(isoYear)                               \
+    P(isWellFormed)                          \
     P(isWordLike)                            \
     P(italics)                               \
     P(join)                                  \
@@ -312,6 +349,9 @@ namespace JS {
     P(log1p)                                 \
     P(log2)                                  \
     P(log10)                                 \
+    P(lastMatch)                             \
+    P(lastParen)                             \
+    P(leftContext)                           \
     P(map)                                   \
     P(max)                                   \
     P(maxByteLength)                         \
@@ -320,9 +360,12 @@ namespace JS {
     P(message)                               \
     P(microsecond)                           \
     P(microseconds)                          \
+    P(microsecondsDisplay)                   \
     P(millisecond)                           \
     P(milliseconds)                          \
+    P(millisecondsDisplay)                   \
     P(min)                                   \
+    P(minimalDays)                           \
     P(minimize)                              \
     P(maximumFractionDigits)                 \
     P(maximumSignificantDigits)              \
@@ -331,18 +374,24 @@ namespace JS {
     P(minimumSignificantDigits)              \
     P(minute)                                \
     P(minutes)                               \
+    P(minutesDisplay)                        \
     P(month)                                 \
     P(monthCode)                             \
     P(monthDayFromFields)                    \
     P(months)                                \
+    P(monthsDisplay)                         \
     P(monthsInYear)                          \
+    P(move)                                  \
     P(multiline)                             \
     P(name)                                  \
     P(nanosecond)                            \
     P(nanoseconds)                           \
+    P(nanosecondsDisplay)                    \
     P(negated)                               \
     P(next)                                  \
+    P(normalize)                             \
     P(notation)                              \
+    P(notify)                                \
     P(now)                                   \
     P(numberingSystem)                       \
     P(numeric)                               \
@@ -366,6 +415,7 @@ namespace JS {
     P(pop)                                   \
     P(pow)                                   \
     P(preventExtensions)                     \
+    P(promise)                               \
     P(propertyIsEnumerable)                  \
     P(prototype)                             \
     P(proxy)                                 \
@@ -380,8 +430,8 @@ namespace JS {
     P(reject)                                \
     P(relativeTo)                            \
     P(repeat)                                \
-    P(resize)                                \
     P(resizable)                             \
+    P(resize)                                \
     P(resolve)                               \
     P(resolvedOptions)                       \
     P(reverse)                               \
@@ -390,11 +440,16 @@ namespace JS {
     P(round)                                 \
     P(roundingIncrement)                     \
     P(roundingMode)                          \
+    P(roundingPriority)                      \
+    P(rightContext)                          \
     P(script)                                \
     P(seal)                                  \
     P(second)                                \
     P(seconds)                               \
+    P(secondsDisplay)                        \
     P(segment)                               \
+    P(select)                                \
+    P(selectRange)                           \
     P(sensitivity)                           \
     P(set)                                   \
     P(setBigInt64)                           \
@@ -454,8 +509,11 @@ namespace JS {
     P(substring)                             \
     P(subtract)                              \
     P(sup)                                   \
+    P(suppressed)                            \
     P(supportedLocalesOf)                    \
     P(supportedValuesOf)                     \
+    P(symmetricDifference)                   \
+    P(take)                                  \
     P(tan)                                   \
     P(tanh)                                  \
     P(test)                                  \
@@ -466,6 +524,7 @@ namespace JS {
     P(timeStyle)                             \
     P(timeZone)                              \
     P(timeZoneName)                          \
+    P(toArray)                               \
     P(toDateString)                          \
     P(toExponential)                         \
     P(toFixed)                               \
@@ -485,15 +544,22 @@ namespace JS {
     P(toPlainTime)                           \
     P(toPlainYearMonth)                      \
     P(toPrecision)                           \
+    P(toReversed)                            \
+    P(toSorted)                              \
+    P(toSpliced)                             \
     P(toString)                              \
     P(total)                                 \
     P(toTemporalInstant)                     \
     P(toTimeString)                          \
     P(toUpperCase)                           \
     P(toUTCString)                           \
+    P(toWellFormed)                          \
     P(toZonedDateTime)                       \
     P(toZonedDateTimeISO)                    \
     P(trace)                                 \
+    P(trailingZeroDisplay)                   \
+    P(transfer)                              \
+    P(transferToFixedLength)                 \
     P(trim)                                  \
     P(trimEnd)                               \
     P(trimLeft)                              \
@@ -504,29 +570,38 @@ namespace JS {
     P(undefined)                             \
     P(unescape)                              \
     P(unicode)                               \
+    P(unicodeSets)                           \
     P(unit)                                  \
     P(unitDisplay)                           \
-    P(until)                                 \
     P(unregister)                            \
     P(unshift)                               \
+    P(until)                                 \
     P(usage)                                 \
+    P(use)                                   \
     P(useGrouping)                           \
     P(value)                                 \
     P(valueOf)                               \
     P(values)                                \
+    P(wait)                                  \
+    P(waitAsync)                             \
     P(warn)                                  \
     P(weekOfYear)                            \
     P(weekday)                               \
+    P(weekend)                               \
     P(weeks)                                 \
+    P(weeksDisplay)                          \
     P(with)                                  \
     P(withCalendar)                          \
     P(withPlainDate)                         \
     P(withPlainTime)                         \
+    P(withResolvers)                         \
     P(withTimeZone)                          \
     P(writable)                              \
     P(year)                                  \
     P(yearMonthFromFields)                   \
+    P(yearOfWeek)                            \
     P(years)                                 \
+    P(yearsDisplay)                          \
     P(zonedDateTime)                         \
     P(zonedDateTimeISO)
 
@@ -539,7 +614,14 @@ struct CommonPropertyNames {
     PropertyKey register_ { "register", PropertyKey::StringMayBeNumber::No };
     PropertyKey return_ { "return", PropertyKey::StringMayBeNumber::No };
     PropertyKey throw_ { "throw", PropertyKey::StringMayBeNumber::No };
+    PropertyKey try_ { "try", PropertyKey::StringMayBeNumber::No };
+    PropertyKey union_ { "union", PropertyKey::StringMayBeNumber::No };
     PropertyKey xor_ { "xor", PropertyKey::StringMayBeNumber::No };
+    PropertyKey inputAlias { "$_", PropertyKey::StringMayBeNumber::No };
+    PropertyKey lastMatchAlias { "$&", PropertyKey::StringMayBeNumber::No };
+    PropertyKey lastParenAlias { "$+", PropertyKey::StringMayBeNumber::No };
+    PropertyKey leftContextAlias { "$`", PropertyKey::StringMayBeNumber::No };
+    PropertyKey rightContextAlias { "$'", PropertyKey::StringMayBeNumber::No };
 #define __ENUMERATE(x) PropertyKey x { #x, PropertyKey::StringMayBeNumber::No };
     ENUMERATE_STANDARD_PROPERTY_NAMES(__ENUMERATE)
 #undef __ENUMERATE

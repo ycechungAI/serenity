@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2020-2022, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2023, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2023, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,140 +8,292 @@
 #pragma once
 
 #include <AK/Badge.h>
-#include <AK/IDAllocator.h>
-#include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
-#include <AK/Weakable.h>
-#include <LibWeb/Bindings/WindowObject.h>
-#include <LibWeb/Bindings/Wrappable.h>
-#include <LibWeb/CSS/MediaQueryList.h>
-#include <LibWeb/CSS/Screen.h>
-#include <LibWeb/DOM/Document.h>
-#include <LibWeb/DOM/Event.h>
+#include <AK/TypeCasts.h>
+#include <LibJS/Heap/Heap.h>
+#include <LibURL/URL.h>
+#include <LibWeb/Bindings/Intrinsics.h>
+#include <LibWeb/Bindings/WindowGlobalMixin.h>
 #include <LibWeb/DOM/EventTarget.h>
-#include <LibWeb/HTML/BrowsingContext.h>
+#include <LibWeb/Forward.h>
+#include <LibWeb/HTML/AnimationFrameCallbackDriver.h>
+#include <LibWeb/HTML/CrossOrigin/CrossOriginPropertyDescriptorMap.h>
 #include <LibWeb/HTML/GlobalEventHandlers.h>
+#include <LibWeb/HTML/MimeType.h>
+#include <LibWeb/HTML/Navigable.h>
+#include <LibWeb/HTML/Plugin.h>
+#include <LibWeb/HTML/Scripting/ImportMap.h>
+#include <LibWeb/HTML/ScrollOptions.h>
+#include <LibWeb/HTML/WindowEventHandlers.h>
+#include <LibWeb/HTML/WindowOrWorkerGlobalScope.h>
+#include <LibWeb/RequestIdleCallback/IdleRequest.h>
 
 namespace Web::HTML {
 
-class RequestAnimationFrameCallback;
+class IdleCallback;
+
+// https://w3c.github.io/csswg-drafts/cssom-view/#dictdef-scrolltooptions
+struct ScrollToOptions : public ScrollOptions {
+    Optional<double> left;
+    Optional<double> top;
+};
+
+// https://html.spec.whatwg.org/multipage/nav-history-apis.html#windowpostmessageoptions
+struct WindowPostMessageOptions : public StructuredSerializeOptions {
+    String target_origin { "/"_string };
+};
 
 class Window final
-    : public RefCounted<Window>
-    , public Weakable<Window>
-    , public DOM::EventTarget
-    , public HTML::GlobalEventHandlers {
+    : public DOM::EventTarget
+    , public GlobalEventHandlers
+    , public WindowEventHandlers
+    , public WindowOrWorkerGlobalScopeMixin
+    , public Bindings::WindowGlobalMixin {
+    WEB_PLATFORM_OBJECT(Window, DOM::EventTarget);
+    JS_DECLARE_ALLOCATOR(Window);
+
 public:
-    static NonnullRefPtr<Window> create_with_document(DOM::Document&);
+    [[nodiscard]] static JS::NonnullGCPtr<Window> create(JS::Realm&);
+
     ~Window();
 
-    using RefCounted::ref;
-    using RefCounted::unref;
+    using WindowOrWorkerGlobalScopeMixin::atob;
+    using WindowOrWorkerGlobalScopeMixin::btoa;
+    using WindowOrWorkerGlobalScopeMixin::clear_interval;
+    using WindowOrWorkerGlobalScopeMixin::clear_timeout;
+    using WindowOrWorkerGlobalScopeMixin::create_image_bitmap;
+    using WindowOrWorkerGlobalScopeMixin::fetch;
+    using WindowOrWorkerGlobalScopeMixin::queue_microtask;
+    using WindowOrWorkerGlobalScopeMixin::set_interval;
+    using WindowOrWorkerGlobalScopeMixin::set_timeout;
+    using WindowOrWorkerGlobalScopeMixin::structured_clone;
 
-    virtual void ref_event_target() override { RefCounted::ref(); }
-    virtual void unref_event_target() override { RefCounted::unref(); }
-    virtual bool dispatch_event(NonnullRefPtr<DOM::Event>) override;
-    virtual JS::Object* create_wrapper(JS::GlobalObject&) override;
+    // ^DOM::EventTarget
+    virtual bool dispatch_event(DOM::Event&) override;
 
-    Page* page();
-    Page const* page() const;
+    // ^WindowOrWorkerGlobalScopeMixin
+    virtual Bindings::PlatformObject& this_impl() override { return *this; }
+    virtual Bindings::PlatformObject const& this_impl() const override { return *this; }
+
+    // ^JS::Object
+    virtual JS::ThrowCompletionOr<bool> internal_set_prototype_of(JS::Object* prototype) override;
+
+    Page& page();
+    Page const& page() const;
 
     // https://html.spec.whatwg.org/multipage/window-object.html#concept-document-window
     DOM::Document const& associated_document() const { return *m_associated_document; }
     DOM::Document& associated_document() { return *m_associated_document; }
+    void set_associated_document(DOM::Document&);
 
     // https://html.spec.whatwg.org/multipage/window-object.html#window-bc
-    HTML::BrowsingContext const* browsing_context() const { return m_associated_document->browsing_context(); }
-    HTML::BrowsingContext* browsing_context() { return m_associated_document->browsing_context(); }
+    BrowsingContext const* browsing_context() const;
+    BrowsingContext* browsing_context();
 
-    void alert(String const&);
-    bool confirm(String const&);
-    String prompt(String const&, String const&);
-    i32 request_animation_frame(NonnullOwnPtr<Bindings::CallbackType> js_callback);
-    void cancel_animation_frame(i32);
+    JS::GCPtr<Navigable> navigable() const;
 
-    i32 set_timeout(Bindings::TimerHandler handler, i32 timeout, JS::MarkedVector<JS::Value> arguments);
-    i32 set_interval(Bindings::TimerHandler handler, i32 timeout, JS::MarkedVector<JS::Value> arguments);
-    void clear_timeout(i32);
-    void clear_interval(i32);
+    ImportMap const& import_map() const { return m_import_map; }
+    void set_import_map(ImportMap const& import_map) { m_import_map = import_map; }
 
-    void queue_microtask(NonnullOwnPtr<Bindings::CallbackType> callback);
+    bool import_maps_allowed() const { return m_import_maps_allowed; }
+    void set_import_maps_allowed(bool import_maps_allowed) { m_import_maps_allowed = import_maps_allowed; }
 
-    int inner_width() const;
-    int inner_height() const;
+    WebIDL::ExceptionOr<JS::GCPtr<WindowProxy>> open_impl(StringView url, StringView target, StringView features);
+    bool has_animation_frame_callbacks() const { return m_animation_frame_callback_driver.has_callbacks(); }
 
-    void did_set_location_href(Badge<Bindings::LocationObject>, AK::URL const& new_href);
-    void did_call_location_reload(Badge<Bindings::LocationObject>);
-    void did_call_location_replace(Badge<Bindings::LocationObject>, String url);
+    DOM::Event* current_event() { return m_current_event.ptr(); }
+    DOM::Event const* current_event() const { return m_current_event.ptr(); }
+    void set_current_event(DOM::Event* event);
 
-    Bindings::WindowObject* wrapper() { return m_wrapper; }
-    Bindings::WindowObject const* wrapper() const { return m_wrapper; }
-
-    void set_wrapper(Badge<Bindings::WindowObject>, Bindings::WindowObject&);
-
-    void deallocate_timer_id(Badge<Timer>, i32);
-
-    HighResolutionTime::Performance& performance() { return *m_performance; }
-
-    Crypto::Crypto& crypto() { return *m_crypto; }
-
-    CSS::Screen& screen() { return *m_screen; }
-
-    DOM::Event const* current_event() const { return m_current_event; }
-    void set_current_event(DOM::Event* event) { m_current_event = event; }
-
-    NonnullRefPtr<CSS::CSSStyleDeclaration> get_computed_style(DOM::Element&) const;
-    NonnullRefPtr<CSS::MediaQueryList> match_media(String);
     Optional<CSS::MediaFeatureValue> query_media_feature(CSS::MediaFeatureID) const;
-
-    float scroll_x() const;
-    float scroll_y() const;
 
     void fire_a_page_transition_event(FlyString const& event_name, bool persisted);
 
-    float device_pixel_ratio() const;
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<Storage>> local_storage();
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<Storage>> session_storage();
 
-    int screen_x() const;
-    int screen_y() const;
+    void start_an_idle_period();
 
-    Selection::Selection* get_selection();
+    AnimationFrameCallbackDriver& animation_frame_callback_driver() { return m_animation_frame_callback_driver; }
 
-    RefPtr<HTML::Storage> local_storage();
-    RefPtr<HTML::Storage> session_storage();
+    // https://html.spec.whatwg.org/multipage/interaction.html#transient-activation
+    bool has_transient_activation() const;
 
-    Window* parent();
+    WebIDL::ExceptionOr<void> initialize_web_interfaces(Badge<WindowEnvironmentSettingsObject>);
 
-    DOM::ExceptionOr<void> post_message(JS::Value, String const& target_origin);
+    Vector<JS::NonnullGCPtr<Plugin>> pdf_viewer_plugin_objects();
+    Vector<JS::NonnullGCPtr<MimeType>> pdf_viewer_mime_type_objects();
 
+    CrossOriginPropertyDescriptorMap const& cross_origin_property_descriptor_map() const { return m_cross_origin_property_descriptor_map; }
+    CrossOriginPropertyDescriptorMap& cross_origin_property_descriptor_map() { return m_cross_origin_property_descriptor_map; }
+
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::CallbackType>> count_queuing_strategy_size_function();
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<WebIDL::CallbackType>> byte_length_queuing_strategy_size_function();
+
+    // JS API functions
+    JS::NonnullGCPtr<WindowProxy> window() const;
+    JS::NonnullGCPtr<WindowProxy> self() const;
+    JS::NonnullGCPtr<DOM::Document const> document() const;
     String name() const;
     void set_name(String const&);
+    String status() const;
+    void close();
+    bool closed() const;
+    void set_status(String const&);
+    [[nodiscard]] JS::NonnullGCPtr<Location> location();
+    JS::NonnullGCPtr<History> history() const;
+    JS::NonnullGCPtr<Navigation> navigation();
+    void focus();
+    void blur();
+
+    JS::NonnullGCPtr<WindowProxy> frames() const;
+    u32 length();
+    JS::GCPtr<WindowProxy const> top() const;
+    JS::GCPtr<WindowProxy const> opener() const;
+    WebIDL::ExceptionOr<void> set_opener(JS::Value);
+    JS::GCPtr<WindowProxy const> parent() const;
+    JS::GCPtr<DOM::Element const> frame_element() const;
+    WebIDL::ExceptionOr<JS::GCPtr<WindowProxy>> open(Optional<String> const& url, Optional<String> const& target, Optional<String> const& features);
+
+    [[nodiscard]] JS::NonnullGCPtr<Navigator> navigator();
+
+    void alert(String const& message = {});
+    bool confirm(Optional<String> const& message);
+    Optional<String> prompt(Optional<String> const& message, Optional<String> const& default_);
+
+    WebIDL::ExceptionOr<void> post_message(JS::Value message, String const&, Vector<JS::Handle<JS::Object>> const&);
+    WebIDL::ExceptionOr<void> post_message(JS::Value message, WindowPostMessageOptions const&);
+
+    Variant<JS::Handle<DOM::Event>, JS::Value> event() const;
+
+    [[nodiscard]] JS::NonnullGCPtr<CSS::CSSStyleDeclaration> get_computed_style(DOM::Element&, Optional<String> const& pseudo_element) const;
+
+    WebIDL::ExceptionOr<JS::NonnullGCPtr<CSS::MediaQueryList>> match_media(String const& query);
+    [[nodiscard]] JS::NonnullGCPtr<CSS::Screen> screen();
+    [[nodiscard]] JS::GCPtr<CSS::VisualViewport> visual_viewport();
+
+    i32 inner_width() const;
+    i32 inner_height() const;
+
+    void move_to(long, long) const;
+    void move_by(long, long) const;
+    void resize_to(long, long) const;
+    void resize_by(long, long) const;
+
+    double scroll_x() const;
+    double scroll_y() const;
+    void scroll(ScrollToOptions const&);
+    void scroll(double x, double y);
+    void scroll_by(ScrollToOptions);
+    void scroll_by(double x, double y);
+
+    i32 screen_x() const;
+    i32 screen_y() const;
+    i32 outer_width() const;
+    i32 outer_height() const;
+    double device_pixel_ratio() const;
+
+    i32 request_animation_frame(WebIDL::CallbackType&);
+    void cancel_animation_frame(i32 handle);
+
+    u32 request_idle_callback(WebIDL::CallbackType&, RequestIdleCallback::IdleRequestOptions const&);
+    void cancel_idle_callback(u32 handle);
+
+    JS::GCPtr<Selection::Selection> get_selection() const;
+
+    [[nodiscard]] JS::NonnullGCPtr<Crypto::Crypto> crypto();
+
+    void capture_events();
+    void release_events();
+
+    [[nodiscard]] JS::NonnullGCPtr<CustomElementRegistry> custom_elements();
+
+    HighResolutionTime::DOMHighResTimeStamp get_last_activation_timestamp() const { return m_last_activation_timestamp; }
+    void set_last_activation_timestamp(HighResolutionTime::DOMHighResTimeStamp timestamp) { m_last_activation_timestamp = timestamp; }
+
+    static void set_inspector_object_exposed(bool);
+    static void set_internals_object_exposed(bool);
+
+    [[nodiscard]] OrderedHashMap<FlyString, JS::NonnullGCPtr<Navigable>> document_tree_child_navigable_target_name_property_set();
+
+    [[nodiscard]] Vector<FlyString> supported_property_names() const override;
+    [[nodiscard]] WebIDL::ExceptionOr<JS::Value> named_item_value(FlyString const&) const override;
 
 private:
-    explicit Window(DOM::Document&);
+    explicit Window(JS::Realm&);
+
+    virtual void visit_edges(Cell::Visitor&) override;
+    virtual void finalize() override;
 
     // ^HTML::GlobalEventHandlers
-    virtual DOM::EventTarget& global_event_handlers_to_event_target() override { return *this; }
+    virtual JS::GCPtr<DOM::EventTarget> global_event_handlers_to_event_target(FlyString const&) override { return *this; }
 
-    enum class Repeat {
-        Yes,
-        No,
+    // ^HTML::WindowEventHandlers
+    virtual JS::GCPtr<DOM::EventTarget> window_event_handlers_to_event_target() override { return *this; }
+
+    void invoke_idle_callbacks();
+
+    struct [[nodiscard]] NamedObjects {
+        Vector<JS::NonnullGCPtr<Navigable>> navigables;
+        Vector<JS::NonnullGCPtr<DOM::Element>> elements;
     };
-    i32 run_timer_initialization_steps(Bindings::TimerHandler handler, i32 timeout, JS::MarkedVector<JS::Value> arguments, Repeat repeat, Optional<i32> previous_id = {});
+    NamedObjects named_objects(StringView name);
+
+    WebIDL::ExceptionOr<void> window_post_message_steps(JS::Value, WindowPostMessageOptions const&);
 
     // https://html.spec.whatwg.org/multipage/window-object.html#concept-document-window
-    WeakPtr<DOM::Document> m_associated_document;
+    JS::GCPtr<DOM::Document> m_associated_document;
 
-    WeakPtr<Bindings::WindowObject> m_wrapper;
+    JS::GCPtr<DOM::Event> m_current_event;
 
-    IDAllocator m_timer_id_allocator;
-    HashMap<int, NonnullRefPtr<Timer>> m_timers;
+    // https://html.spec.whatwg.org/multipage/webappapis.html#concept-window-import-map
+    ImportMap m_import_map;
 
-    NonnullOwnPtr<HighResolutionTime::Performance> m_performance;
-    NonnullRefPtr<Crypto::Crypto> m_crypto;
-    NonnullOwnPtr<CSS::Screen> m_screen;
-    RefPtr<DOM::Event> m_current_event;
+    // https://html.spec.whatwg.org/multipage/webappapis.html#import-maps-allowed
+    bool m_import_maps_allowed { true };
 
-    HashMap<i32, NonnullRefPtr<RequestAnimationFrameCallback>> m_request_animation_frame_callbacks;
+    JS::GCPtr<Crypto::Crypto> m_crypto;
+    JS::GCPtr<CSS::Screen> m_screen;
+    JS::GCPtr<Navigator> m_navigator;
+    JS::GCPtr<Location> m_location;
+
+    // https://html.spec.whatwg.org/multipage/nav-history-apis.html#window-navigation-api
+    JS::GCPtr<Navigation> m_navigation;
+
+    // https://html.spec.whatwg.org/multipage/custom-elements.html#custom-elements-api
+    // Each Window object is associated with a unique instance of a CustomElementRegistry object, allocated when the Window object is created.
+    JS::GCPtr<CustomElementRegistry> m_custom_element_registry;
+
+    AnimationFrameCallbackDriver m_animation_frame_callback_driver;
+
+    // https://w3c.github.io/requestidlecallback/#dfn-list-of-idle-request-callbacks
+    Vector<NonnullRefPtr<IdleCallback>> m_idle_request_callbacks;
+    // https://w3c.github.io/requestidlecallback/#dfn-list-of-runnable-idle-callbacks
+    Vector<NonnullRefPtr<IdleCallback>> m_runnable_idle_callbacks;
+    // https://w3c.github.io/requestidlecallback/#dfn-idle-callback-identifier
+    u32 m_idle_callback_identifier = 0;
+
+    // https://html.spec.whatwg.org/multipage/system-state.html#pdf-viewer-plugin-objects
+    Vector<JS::NonnullGCPtr<Plugin>> m_pdf_viewer_plugin_objects;
+
+    // https://html.spec.whatwg.org/multipage/system-state.html#pdf-viewer-mime-type-objects
+    Vector<JS::NonnullGCPtr<MimeType>> m_pdf_viewer_mime_type_objects;
+
+    // [[CrossOriginPropertyDescriptorMap]], https://html.spec.whatwg.org/multipage/browsers.html#crossoriginpropertydescriptormap
+    CrossOriginPropertyDescriptorMap m_cross_origin_property_descriptor_map;
+
+    // https://html.spec.whatwg.org/multipage/interaction.html#user-activation-data-model
+    HighResolutionTime::DOMHighResTimeStamp m_last_activation_timestamp { NumericLimits<double>::max() };
+
+    // https://streams.spec.whatwg.org/#count-queuing-strategy-size-function
+    JS::GCPtr<WebIDL::CallbackType> m_count_queuing_strategy_size_function;
+
+    // https://streams.spec.whatwg.org/#byte-length-queuing-strategy-size-function
+    JS::GCPtr<WebIDL::CallbackType> m_byte_length_queuing_strategy_size_function;
+
+    // https://html.spec.whatwg.org/multipage/nav-history-apis.html#dom-window-status
+    // When the Window object is created, the attribute must be set to the empty string. It does not do anything else.
+    String m_status;
 };
 
 void run_animation_frame_callbacks(DOM::Document&, double now);

@@ -8,9 +8,10 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Forward.h>
-#include <AK/String.h>
 #include <AK/Types.h>
+#include <AK/Vector.h>
 #include <LibCore/AnonymousBuffer.h>
 #include <LibCore/ConfigFile.h>
 #include <LibGfx/Color.h>
@@ -28,12 +29,26 @@ namespace Gfx {
     C(ActiveWindowTitleStripes)    \
     C(Base)                        \
     C(BaseText)                    \
+    C(Black)                       \
+    C(Blue)                        \
+    C(BrightBlack)                 \
+    C(BrightBlue)                  \
+    C(BrightCyan)                  \
+    C(BrightGreen)                 \
+    C(BrightMagenta)               \
+    C(BrightRed)                   \
+    C(BrightWhite)                 \
+    C(BrightYellow)                \
     C(Button)                      \
     C(ButtonText)                  \
+    C(ColorSchemeBackground)       \
+    C(ColorSchemeForeground)       \
+    C(Cyan)                        \
     C(DisabledTextFront)           \
     C(DisabledTextBack)            \
     C(DesktopBackground)           \
     C(FocusOutline)                \
+    C(Green)                       \
     C(Gutter)                      \
     C(GutterBorder)                \
     C(HighlightWindowBorder1)      \
@@ -52,6 +67,7 @@ namespace Gfx {
     C(InactiveWindowTitleShadow)   \
     C(InactiveWindowTitleStripes)  \
     C(Link)                        \
+    C(Magenta)                     \
     C(MenuBase)                    \
     C(MenuBaseText)                \
     C(MenuSelection)               \
@@ -63,6 +79,7 @@ namespace Gfx {
     C(MovingWindowTitleShadow)     \
     C(MovingWindowTitleStripes)    \
     C(PlaceholderText)             \
+    C(Red)                         \
     C(RubberBandBorder)            \
     C(RubberBandFill)              \
     C(Ruler)                       \
@@ -97,14 +114,18 @@ namespace Gfx {
     C(Tray)                        \
     C(TrayText)                    \
     C(VisitedLink)                 \
+    C(White)                       \
     C(Window)                      \
-    C(WindowText)
+    C(WindowText)                  \
+    C(Yellow)
 
 #define ENUMERATE_ALIGNMENT_ROLES(C) \
     C(TitleAlignment)
 
 #define ENUMERATE_FLAG_ROLES(C) \
-    C(IsDark)
+    C(BoldTextAsBright)         \
+    C(IsDark)                   \
+    C(TitleButtonsIconOnly)
 
 #define ENUMERATE_METRIC_ROLES(C) \
     C(BorderThickness)            \
@@ -119,7 +140,8 @@ namespace Gfx {
     C(ActiveWindowShadow)       \
     C(TaskbarShadow)            \
     C(MenuShadow)               \
-    C(TooltipShadow)
+    C(TooltipShadow)            \
+    C(ColorScheme)
 
 enum class ColorRole {
     NoRole,
@@ -135,15 +157,15 @@ enum class ColorRole {
     DisabledText = ThreedShadow1,
 };
 
-inline const char* to_string(ColorRole role)
+inline StringView to_string(ColorRole role)
 {
     switch (role) {
     case ColorRole::NoRole:
-        return "NoRole";
+        return "NoRole"sv;
 #undef __ENUMERATE_COLOR_ROLE
 #define __ENUMERATE_COLOR_ROLE(role) \
     case ColorRole::role:            \
-        return #role;
+        return #role##sv;
         ENUMERATE_COLOR_ROLES(__ENUMERATE_COLOR_ROLE)
 #undef __ENUMERATE_COLOR_ROLE
     default:
@@ -162,15 +184,15 @@ enum class AlignmentRole {
         __Count,
 };
 
-inline const char* to_string(AlignmentRole role)
+inline StringView to_string(AlignmentRole role)
 {
     switch (role) {
     case AlignmentRole::NoRole:
-        return "NoRole";
+        return "NoRole"sv;
 #undef __ENUMERATE_ALIGNMENT_ROLE
 #define __ENUMERATE_ALIGNMENT_ROLE(role) \
     case AlignmentRole::role:            \
-        return #role;
+        return #role##sv;
         ENUMERATE_ALIGNMENT_ROLES(__ENUMERATE_ALIGNMENT_ROLE)
 #undef __ENUMERATE_ALIGNMENT_ROLE
     default:
@@ -189,15 +211,15 @@ enum class FlagRole {
         __Count,
 };
 
-inline const char* to_string(FlagRole role)
+inline StringView to_string(FlagRole role)
 {
     switch (role) {
     case FlagRole::NoRole:
-        return "NoRole";
+        return "NoRole"sv;
 #undef __ENUMERATE_FLAG_ROLE
 #define __ENUMERATE_FLAG_ROLE(role) \
     case FlagRole::role:            \
-        return #role;
+        return #role##sv;
         ENUMERATE_FLAG_ROLES(__ENUMERATE_FLAG_ROLE)
 #undef __ENUMERATE_FLAG_ROLE
     default:
@@ -216,15 +238,15 @@ enum class MetricRole {
         __Count,
 };
 
-inline const char* to_string(MetricRole role)
+inline StringView to_string(MetricRole role)
 {
     switch (role) {
     case MetricRole::NoRole:
-        return "NoRole";
+        return "NoRole"sv;
 #undef __ENUMERATE_METRIC_ROLE
 #define __ENUMERATE_METRIC_ROLE(role) \
     case MetricRole::role:            \
-        return #role;
+        return #role##sv;
         ENUMERATE_METRIC_ROLES(__ENUMERATE_METRIC_ROLE)
 #undef __ENUMERATE_METRIC_ROLE
     default:
@@ -243,15 +265,15 @@ enum class PathRole {
         __Count,
 };
 
-inline const char* to_string(PathRole role)
+inline StringView to_string(PathRole role)
 {
     switch (role) {
     case PathRole::NoRole:
-        return "NoRole";
+        return "NoRole"sv;
 #undef __ENUMERATE_PATH_ROLE
 #define __ENUMERATE_PATH_ROLE(role) \
     case PathRole::role:            \
-        return #role;
+        return #role##sv;
         ENUMERATE_PATH_ROLES(__ENUMERATE_PATH_ROLE)
 #undef __ENUMERATE_PATH_ROLE
     default:
@@ -269,8 +291,16 @@ struct SystemTheme {
 
 Core::AnonymousBuffer& current_system_theme_buffer();
 void set_system_theme(Core::AnonymousBuffer);
-Core::AnonymousBuffer load_system_theme(Core::ConfigFile const&);
-Core::AnonymousBuffer load_system_theme(String const& path);
+ErrorOr<Core::AnonymousBuffer> load_system_theme(Core::ConfigFile const&, Optional<ByteString> const& color_scheme = OptionalNone());
+ErrorOr<Core::AnonymousBuffer> load_system_theme(ByteString const& path, Optional<ByteString> const& color_scheme = OptionalNone());
+
+struct SystemThemeMetaData {
+    ByteString name;
+    ByteString menu_name;
+    ByteString path;
+};
+
+ErrorOr<Vector<SystemThemeMetaData>> list_installed_system_themes();
 
 }
 

@@ -10,9 +10,8 @@ $ /usr/Tests/Kernel/crash [options]
 
 ## Description
 
-This program is used to test how the Serenity kernel or UserspaceEmulator
-handle userspace crashes, and can be used to simulate many different kinds
-of crashes.
+This program is used to test how the Serenity kernel handles userspace crashes,
+and can be used to simulate many different kinds of crashes.
 
 ## Options
 
@@ -29,12 +28,13 @@ of crashes.
 * `-T`: Make a syscall while using an invalid stack pointer.
 * `-t`: Trigger a page fault while using an invalid stack pointer.
 * `-S`: Make a syscall from writeable memory.
+* `-y`: Make a syscall from legitimate memory (but outside syscall-code mapped region).
 * `-X`: Attempt to execute non-executable memory (Not mapped with PROT\_EXEC).
 * `-U`: Attempt to trigger an x86 User Mode Instruction Prevention fault.
 * `-I`: Use an x86 I/O instruction in userspace.
-* `-c`: Read the x86 TSC (Time Stamp Counter) directly.
 * `-p`: Violate `pledge()`'d promises.
 * `-n`: Perform a failing assertion.
+* `-R`: Dereference a null RefPtr.
 
 ## Examples
 

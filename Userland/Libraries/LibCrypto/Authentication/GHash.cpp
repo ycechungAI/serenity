@@ -6,18 +6,17 @@
 
 #include <AK/ByteReader.h>
 #include <AK/Debug.h>
-#include <AK/MemoryStream.h>
 #include <AK/Types.h>
 #include <LibCrypto/Authentication/GHash.h>
 
 namespace {
 
-static u32 to_u32(const u8* b)
+static u32 to_u32(u8 const* b)
 {
     return AK::convert_between_host_and_big_endian(ByteReader::load32(b));
 }
 
-static void to_u8s(u8* b, const u32* w)
+static void to_u8s(u8* b, u32 const* w)
 {
     for (auto i = 0; i < 4; ++i) {
         ByteReader::store(b + i * 4, AK::convert_between_host_and_big_endian(w[i]));
@@ -26,8 +25,7 @@ static void to_u8s(u8* b, const u32* w)
 
 }
 
-namespace Crypto {
-namespace Authentication {
+namespace Crypto::Authentication {
 
 GHash::TagType GHash::process(ReadonlyBytes aad, ReadonlyBytes cipher)
 {
@@ -45,11 +43,9 @@ GHash::TagType GHash::process(ReadonlyBytes aad, ReadonlyBytes cipher)
         }
 
         if (i > buf.size()) {
-            static u8 buffer[16];
+            u8 buffer[16] = {};
             Bytes buffer_bytes { buffer, 16 };
-            OutputMemoryStream stream { buffer_bytes };
-            stream.write(buf.slice(i - 16));
-            stream.fill_to_end(0);
+            buf.slice(i - 16).copy_to(buffer_bytes);
 
             for (auto j = 0; j < 4; ++j) {
                 tag[j] ^= to_u32(buffer_bytes.offset(j * 4));
@@ -90,19 +86,19 @@ GHash::TagType GHash::process(ReadonlyBytes aad, ReadonlyBytes cipher)
 
 /// Galois Field multiplication using <x^127 + x^7 + x^2 + x + 1>.
 /// Note that x, y, and z are strictly BE.
-void galois_multiply(u32 (&z)[4], const u32 (&_x)[4], const u32 (&_y)[4])
+void galois_multiply(u32 (&z)[4], u32 const (&_x)[4], u32 const (&_y)[4])
 {
     u32 x[4] { _x[0], _x[1], _x[2], _x[3] };
     u32 y[4] { _y[0], _y[1], _y[2], _y[3] };
     __builtin_memset(z, 0, sizeof(z));
 
+#pragma GCC unroll 16
     for (ssize_t i = 127; i > -1; --i) {
-        if ((y[3 - (i / 32)] >> (i % 32)) & 1) {
-            z[0] ^= x[0];
-            z[1] ^= x[1];
-            z[2] ^= x[2];
-            z[3] ^= x[3];
-        }
+        auto r = -((y[3 - (i / 32)] >> (i % 32)) & 1);
+        z[0] ^= x[0] & r;
+        z[1] ^= x[1] & r;
+        z[2] ^= x[2] & r;
+        z[3] ^= x[3] & r;
         auto a0 = x[0] & 1;
         x[0] >>= 1;
         auto a1 = x[1] & 1;
@@ -115,10 +111,8 @@ void galois_multiply(u32 (&z)[4], const u32 (&_x)[4], const u32 (&_y)[4])
         x[3] >>= 1;
         x[3] |= a2 << 31;
 
-        if (a3)
-            x[0] ^= 0xe1000000;
+        x[0] ^= 0xe1000000 & -a3;
     }
 }
 
-}
 }

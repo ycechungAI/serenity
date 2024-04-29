@@ -1,10 +1,14 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=gawk
-version=5.1.0
-useconfigure="true"
-use_fresh_config_sub=true
-files="https://ftpmirror.gnu.org/gnu/gawk/gawk-${version}.tar.gz gawk-${version}.tar.gz
-https://ftpmirror.gnu.org/gnu/gawk/gawk-${version}.tar.gz.sig gawk-${version}.tar.gz.sig
-https://ftpmirror.gnu.org/gnu/gnu-keyring.gpg gnu-keyring.gpg"
-auth_type="sig"
-auth_opts=("--keyring" "./gnu-keyring.gpg" "gawk-${version}.tar.gz.sig")
+port='gawk'
+version='5.3.0'
+useconfigure='true'
+files=(
+    "https://ftpmirror.gnu.org/gnu/gawk/gawk-${version}.tar.gz#378f8864ec21cfceaa048f7e1869ac9b4597b449087caf1eb55e440d30273336"
+)
+depends=(
+    'gmp'
+    'mpfr'
+)
+configopts=(
+    "--with-sysroot=${SERENITY_INSTALL_ROOT}"
+)

@@ -7,21 +7,21 @@
  */
 
 #include <AK/Types.h>
-#include <Kernel/Multiboot.h>
-#include <Kernel/PhysicalAddress.h>
+#include <Kernel/Boot/Multiboot.h>
+#include <Kernel/Memory/PhysicalAddress.h>
+#include <Kernel/Memory/VirtualAddress.h>
 #include <Kernel/Prekernel/Prekernel.h>
-#include <Kernel/VirtualAddress.h>
-#include <LibC/elf.h>
+#include <LibELF/ELFABI.h>
 #include <LibELF/Relocation.h>
 
-#if ARCH(I386) || ARCH(X86_64)
-#    include <Kernel/Arch/x86/ASM_wrapper.h>
-#    include <Kernel/Arch/x86/CPUID.h>
+#if ARCH(X86_64)
+#    include <Kernel/Arch/x86_64/ASM_wrapper.h>
+#    include <Kernel/Arch/x86_64/CPUID.h>
 #endif
 
 // Defined in the linker script
-extern size_t __stack_chk_guard;
-size_t __stack_chk_guard __attribute__((used));
+extern uintptr_t __stack_chk_guard;
+uintptr_t __stack_chk_guard __attribute__((used));
 extern "C" [[noreturn]] void __stack_chk_fail();
 
 extern "C" u8 start_of_prekernel_image[];
@@ -74,6 +74,22 @@ extern "C" [[noreturn]] void init();
 
 u64 generate_secure_seed();
 
+static void memmove_virt(void* dest_virt, FlatPtr dest_phys, void* src, size_t n)
+{
+    if (dest_phys < (FlatPtr)src) {
+        u8* pd = (u8*)dest_virt;
+        u8 const* ps = (u8 const*)src;
+        for (; n--;)
+            *pd++ = *ps++;
+        return;
+    }
+
+    u8* pd = (u8*)dest_virt;
+    u8 const* ps = (u8 const*)src;
+    for (pd += n, ps += n; n--;)
+        *--pd = *--ps;
+}
+
 extern "C" [[noreturn]] void init()
 {
     if (multiboot_info_ptr->mods_count < 1)
@@ -83,23 +99,26 @@ extern "C" [[noreturn]] void init()
 
     u8* kernel_image = (u8*)(FlatPtr)kernel_module->start;
     // copy the ELF header and program headers because we might end up overwriting them
-    ElfW(Ehdr) kernel_elf_header = *(ElfW(Ehdr)*)kernel_image;
-    ElfW(Phdr) kernel_program_headers[16];
+    Elf_Ehdr kernel_elf_header = *(Elf_Ehdr*)kernel_image;
+    Elf_Phdr kernel_program_headers[16];
     if (kernel_elf_header.e_phnum > array_size(kernel_program_headers))
         halt();
-    __builtin_memcpy(kernel_program_headers, kernel_image + kernel_elf_header.e_phoff, sizeof(ElfW(Phdr)) * kernel_elf_header.e_phnum);
+    __builtin_memcpy(kernel_program_headers, kernel_image + kernel_elf_header.e_phoff, sizeof(Elf_Phdr) * kernel_elf_header.e_phnum);
 
     FlatPtr kernel_physical_base = 0x200000;
-#if ARCH(I386)
-    FlatPtr default_kernel_load_base = 0xc0200000;
-#else
-    FlatPtr default_kernel_load_base = 0x2000200000;
-#endif
+    FlatPtr default_kernel_load_base = KERNEL_MAPPING_BASE + 0x200000;
 
     FlatPtr kernel_load_base = default_kernel_load_base;
 
     if (__builtin_strstr(kernel_cmdline, "disable_kaslr") == nullptr) {
         FlatPtr maximum_offset = (FlatPtr)KERNEL_PD_SIZE - MAX_KERNEL_SIZE - 2 * MiB; // The first 2 MiB are used for mapping the pre-kernel
+#ifdef KERNEL_ADDRESS_SANITIZER_ENABLED
+        // To allow for easy mapping between the kernel virtual addresses and KASAN shadow memory,
+        // we map shadow memory at the very end of the virtual range, so that we can index into it
+        // using just an offset. To ensure this range is free when needed, we restrict the possible
+        // KASLR range when KASAN is enabled to make sure we don't use the end of the virtual range.
+        maximum_offset -= ceil_div(maximum_offset, 9ul);
+#endif
         kernel_load_base += (generate_secure_seed() % maximum_offset);
         kernel_load_base &= ~(2 * MiB - 1);
     }
@@ -125,11 +144,8 @@ extern "C" [[noreturn]] void init()
     VERIFY(kernel_load_base % 0x1000 == 0);
     VERIFY(kernel_load_base >= kernel_mapping_base + 0x200000);
 
-#if ARCH(I386)
-    int pdpt_flags = 0x1;
-#else
     int pdpt_flags = 0x3;
-#endif
+
     boot_pdpt[(kernel_mapping_base >> 30) & 0x1ffu] = (FlatPtr)boot_pd_kernel | pdpt_flags;
 
     boot_pd_kernel[0] = (FlatPtr)boot_pd_kernel_pt0 | 0x3;
@@ -159,13 +175,42 @@ extern "C" [[noreturn]] void init()
 
     boot_pd_kernel[511] = (FlatPtr)boot_pd_kernel_pt1023 | 0x3;
 
+    // Fill-in multiboot-related info before loading kernel as to avoid accidentally
+    // overwriting mbi end as to avoid to check whether it's mapped after reloading page tables.
+    BootInfo info {};
+
+    multiboot_info_ptr->mods_count--;
+    multiboot_info_ptr->mods_addr += sizeof(multiboot_module_entry_t);
+
+    auto adjust_by_mapping_base = [kernel_mapping_base](auto ptr) {
+        return (decltype(ptr))((FlatPtr)ptr + kernel_mapping_base);
+    };
+
+    info.multiboot_flags = multiboot_info_ptr->flags;
+    info.multiboot_memory_map = adjust_by_mapping_base((FlatPtr)multiboot_info_ptr->mmap_addr);
+    info.multiboot_memory_map_count = multiboot_info_ptr->mmap_length / sizeof(multiboot_memory_map_t);
+    info.multiboot_modules = adjust_by_mapping_base((FlatPtr)multiboot_info_ptr->mods_addr);
+    info.multiboot_modules_count = multiboot_info_ptr->mods_count;
+    if ((multiboot_info_ptr->flags & MULTIBOOT_INFO_FRAMEBUFFER_INFO) != 0) {
+        info.multiboot_framebuffer_addr = multiboot_info_ptr->framebuffer_addr;
+        info.multiboot_framebuffer_pitch = multiboot_info_ptr->framebuffer_pitch;
+        info.multiboot_framebuffer_width = multiboot_info_ptr->framebuffer_width;
+        info.multiboot_framebuffer_height = multiboot_info_ptr->framebuffer_height;
+        info.multiboot_framebuffer_bpp = multiboot_info_ptr->framebuffer_bpp;
+        info.multiboot_framebuffer_type = multiboot_info_ptr->framebuffer_type;
+    }
+
     reload_cr3();
 
-    for (ssize_t i = kernel_elf_header.e_phnum - 1; i >= 0; i--) {
-        auto& kernel_program_header = kernel_program_headers[i];
+    int backwards = kernel_physical_base >= (FlatPtr)kernel_image;
+
+    for (ssize_t i = 0; i < kernel_elf_header.e_phnum; i++) {
+        auto& kernel_program_header = kernel_program_headers[backwards ? kernel_elf_header.e_phnum - 1 - i : i];
         if (kernel_program_header.p_type != PT_LOAD)
             continue;
-        __builtin_memmove((u8*)kernel_load_base + kernel_program_header.p_vaddr, kernel_image + kernel_program_header.p_offset, kernel_program_header.p_filesz);
+        memmove_virt((u8*)kernel_load_base + kernel_program_header.p_vaddr,
+            kernel_physical_base + kernel_program_header.p_vaddr,
+            kernel_image + kernel_program_header.p_offset, kernel_program_header.p_filesz);
     }
 
     for (ssize_t i = kernel_elf_header.e_phnum - 1; i >= 0; i--) {
@@ -175,14 +220,6 @@ extern "C" [[noreturn]] void init()
         __builtin_memset((u8*)kernel_load_base + kernel_program_header.p_vaddr + kernel_program_header.p_filesz, 0, kernel_program_header.p_memsz - kernel_program_header.p_filesz);
     }
 
-    multiboot_info_ptr->mods_count--;
-    multiboot_info_ptr->mods_addr += sizeof(multiboot_module_entry_t);
-
-    auto adjust_by_mapping_base = [kernel_mapping_base](auto ptr) {
-        return (decltype(ptr))((FlatPtr)ptr + kernel_mapping_base);
-    };
-
-    BootInfo info {};
     info.start_of_prekernel_image = (PhysicalPtr)start_of_prekernel_image;
     info.end_of_prekernel_image = (PhysicalPtr)end_of_prekernel_image;
     info.physical_to_virtual_offset = kernel_load_base - kernel_physical_base;
@@ -198,28 +235,10 @@ extern "C" [[noreturn]] void init()
     info.boot_pd_kernel = (PhysicalPtr)boot_pd_kernel;
     info.boot_pd_kernel_pt1023 = (FlatPtr)adjust_by_mapping_base(boot_pd_kernel_pt1023);
     info.kernel_cmdline = (FlatPtr)adjust_by_mapping_base(kernel_cmdline);
-    info.multiboot_flags = multiboot_info_ptr->flags;
-    info.multiboot_memory_map = adjust_by_mapping_base((FlatPtr)multiboot_info_ptr->mmap_addr);
-    info.multiboot_memory_map_count = multiboot_info_ptr->mmap_length / sizeof(multiboot_memory_map_t);
-    info.multiboot_modules = adjust_by_mapping_base((FlatPtr)multiboot_info_ptr->mods_addr);
-    info.multiboot_modules_count = multiboot_info_ptr->mods_count;
-    if ((multiboot_info_ptr->flags & MULTIBOOT_INFO_FRAMEBUFFER_INFO) != 0) {
-        info.multiboot_framebuffer_addr = multiboot_info_ptr->framebuffer_addr;
-        info.multiboot_framebuffer_pitch = multiboot_info_ptr->framebuffer_pitch;
-        info.multiboot_framebuffer_width = multiboot_info_ptr->framebuffer_width;
-        info.multiboot_framebuffer_height = multiboot_info_ptr->framebuffer_height;
-        info.multiboot_framebuffer_bpp = multiboot_info_ptr->framebuffer_bpp;
-        info.multiboot_framebuffer_type = multiboot_info_ptr->framebuffer_type;
-    }
 
     asm(
-#if ARCH(I386)
-        "add %0, %%esp"
-#else
         "mov %0, %%rax\n"
-        "add %%rax, %%rsp"
-#endif
-        ::"g"(kernel_mapping_base)
+        "add %%rax, %%rsp" ::"g"(kernel_mapping_base)
         : "ax");
 
     // unmap the 0-1MB region
@@ -244,17 +263,17 @@ u64 generate_secure_seed()
 {
     u32 seed = 0xFEEBDAED;
 
-#if ARCH(I386) || ARCH(X86_64)
+#if ARCH(X86_64)
     CPUID processor_info(0x1);
     if (processor_info.edx() & (1 << 4)) // TSC
         seed ^= read_tsc();
 
     if (processor_info.ecx() & (1 << 30)) // RDRAND
-        seed ^= rdrand();
+        seed ^= read_rdrand();
 
     CPUID extended_features(0x7);
     if (extended_features.ebx() & (1 << 18)) // RDSEED
-        seed ^= rdseed();
+        seed ^= read_rdseed();
 #else
 #    warning No native randomness source available for this architecture
 #endif

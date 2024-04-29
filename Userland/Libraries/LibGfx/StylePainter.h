@@ -9,6 +9,7 @@
 #include <AK/Forward.h>
 #include <LibGfx/Forward.h>
 #include <LibGfx/Orientation.h>
+#include <LibGfx/TabPosition.h>
 
 namespace Gfx {
 
@@ -18,17 +19,17 @@ enum class ButtonStyle {
     Coolbar,
     Tray,
 };
-enum class FrameShadow {
-    Plain,
-    Raised,
-    Sunken
-};
-enum class FrameShape {
+
+enum class FrameStyle {
     NoFrame,
-    Box,
-    Container,
-    Panel,
     Window,
+    Plain,
+    RaisedBox,
+    SunkenBox,
+    RaisedContainer,
+    SunkenContainer,
+    RaisedPanel,
+    SunkenPanel,
 };
 
 // FIXME: should this be in its own header?
@@ -37,8 +38,8 @@ public:
     virtual ~BaseStylePainter() = default;
 
     virtual void paint_button(Painter&, IntRect const&, Palette const&, ButtonStyle, bool pressed, bool hovered = false, bool checked = false, bool enabled = true, bool focused = false, bool default_button = false) = 0;
-    virtual void paint_tab_button(Painter&, IntRect const&, Palette const&, bool active, bool hovered, bool enabled, bool top, bool in_active_window) = 0;
-    virtual void paint_frame(Painter&, IntRect const&, Palette const&, FrameShape, FrameShadow, int thickness, bool skip_vertical_lines = false) = 0;
+    virtual void paint_tab_button(Painter&, IntRect const&, Palette const&, bool active, bool hovered, bool enabled, TabPosition position, bool in_active_window, bool accented) = 0;
+    virtual void paint_frame(Painter&, IntRect const&, Palette const&, FrameStyle, bool skip_vertical_lines = false) = 0;
     virtual void paint_window_frame(Painter&, IntRect const&, Palette const&) = 0;
     virtual void paint_progressbar(Painter&, IntRect const&, Palette const&, int min, int max, int value, StringView text, Orientation = Orientation::Horizontal) = 0;
     virtual void paint_radio_button(Painter&, IntRect const&, Palette const&, bool is_checked, bool is_being_pressed) = 0;
@@ -56,8 +57,8 @@ public:
 
     // FIXME: These are here for API compatibility, we should probably remove them and move BaseStylePainter into here
     static void paint_button(Painter&, IntRect const&, Palette const&, ButtonStyle, bool pressed, bool hovered = false, bool checked = false, bool enabled = true, bool focused = false, bool default_button = false);
-    static void paint_tab_button(Painter&, IntRect const&, Palette const&, bool active, bool hovered, bool enabled, bool top, bool in_active_window);
-    static void paint_frame(Painter&, IntRect const&, Palette const&, FrameShape, FrameShadow, int thickness, bool skip_vertical_lines = false);
+    static void paint_tab_button(Painter&, IntRect const&, Palette const&, bool active, bool hovered, bool enabled, TabPosition position, bool in_active_window, bool accented);
+    static void paint_frame(Painter&, IntRect const&, Palette const&, FrameStyle, bool skip_vertical_lines = false);
     static void paint_window_frame(Painter&, IntRect const&, Palette const&);
     static void paint_progressbar(Painter&, IntRect const&, Palette const&, int min, int max, int value, StringView text, Orientation = Orientation::Horizontal);
     static void paint_radio_button(Painter&, IntRect const&, Palette const&, bool is_checked, bool is_being_pressed);

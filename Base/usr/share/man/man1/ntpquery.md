@@ -8,16 +8,15 @@ ntpquery
 $ ntpquery [--adjust] [--set] [--verbose] [host]
 ```
 
-## Options:
+## Options
 
-* `--help`: Display help message and exit
-* `--version`: Print version
 * `-a`, `--adjust`: Gradually adjust system time (requires root)
 * `-s`, `--set`: Immediately set system time (requires root)
 * `-v`, `--verbose`: Verbose output
 
-## Arguments:
+## Arguments
 
 * `host`: NTP server
 
-<!-- Auto-generated through ArgsParser -->
+## See Also
+* [`date`(1)](help://man/1/date)

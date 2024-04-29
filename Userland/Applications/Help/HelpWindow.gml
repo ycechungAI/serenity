@@ -1,4 +1,4 @@
-@GUI::Widget {
+@Help::MainWidget {
     fill_with_background_color: true
     layout: @GUI::VerticalBoxLayout {
         spacing: 2
@@ -17,15 +17,17 @@
 
         @GUI::TabWidget {
             name: "tab_widget"
-            fixed_width: 200
+            preferred_width: 200
             container_margins: [6]
 
             @GUI::TreeView {
                 name: "browse_view"
+                title: "Browse"
             }
 
             @GUI::Widget {
                 name: "search_container"
+                title: "Search"
                 layout: @GUI::VerticalBoxLayout {}
 
                 @GUI::TextBox {
@@ -39,7 +41,7 @@
             }
         }
 
-        @Web::OutOfProcessWebView {
+        @WebView::OutOfProcessWebView {
             name: "web_view"
         }
     }

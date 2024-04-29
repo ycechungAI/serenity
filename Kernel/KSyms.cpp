@@ -5,19 +5,19 @@
  */
 
 #include <AK/TemporaryChange.h>
+#include <Kernel/Arch/SafeMem.h>
 #include <Kernel/Arch/SmapDisabler.h>
-#include <Kernel/Arch/x86/SafeMem.h>
 #include <Kernel/FileSystem/OpenFileDescription.h>
 #include <Kernel/KSyms.h>
-#include <Kernel/Process.h>
-#include <Kernel/Scheduler.h>
 #include <Kernel/Sections.h>
+#include <Kernel/Tasks/Process.h>
+#include <Kernel/Tasks/Scheduler.h>
 
 namespace Kernel {
 
 FlatPtr g_lowest_kernel_symbol_address = 0xffffffff;
 FlatPtr g_highest_kernel_symbol_address = 0;
-bool g_kernel_symbols_available = false;
+SetOnce g_kernel_symbols_available;
 
 extern "C" {
 __attribute__((section(".kernel_symbols"))) char kernel_symbols[5 * MiB] {};
@@ -37,14 +37,14 @@ UNMAP_AFTER_INIT static u8 parse_hex_digit(char nibble)
 FlatPtr address_for_kernel_symbol(StringView name)
 {
     for (size_t i = 0; i < s_symbol_count; ++i) {
-        const auto& symbol = s_symbols[i];
+        auto const& symbol = s_symbols[i];
         if (name == symbol.name)
             return symbol.address;
     }
     return 0;
 }
 
-const KernelSymbol* symbolicate_kernel_address(FlatPtr address)
+KernelSymbol const* symbolicate_kernel_address(FlatPtr address)
 {
     if (address < g_lowest_kernel_symbol_address || address > g_highest_kernel_symbol_address)
         return nullptr;
@@ -84,7 +84,17 @@ UNMAP_AFTER_INIT static void load_kernel_symbols_from_data(Bytes buffer)
             }
         }
         auto& ksym = s_symbols[current_symbol_index];
+
+        // FIXME: Remove this ifdef once the aarch64 kernel is loaded by the Prekernel.
+        //        Currently, the aarch64 kernel is linked at a high virtual memory address, instead
+        //        of zero, so the address of a symbol does not need to be offset by the kernel_load_base.
+#if ARCH(X86_64)
         ksym.address = kernel_load_base + address;
+#elif ARCH(AARCH64) || ARCH(RISCV64)
+        ksym.address = address;
+#else
+#    error "Unknown architecture"
+#endif
         ksym.name = start_of_name;
 
         *bufptr = '\0';
@@ -97,10 +107,10 @@ UNMAP_AFTER_INIT static void load_kernel_symbols_from_data(Bytes buffer)
         ++bufptr;
         ++current_symbol_index;
     }
-    g_kernel_symbols_available = true;
+    g_kernel_symbols_available.set();
 }
 
-NEVER_INLINE static void dump_backtrace_impl(FlatPtr base_pointer, bool use_ksyms, PrintToScreen print_to_screen)
+NEVER_INLINE static void dump_backtrace_impl(FlatPtr frame_pointer, bool use_ksyms, PrintToScreen print_to_screen)
 {
 #define PRINT_LINE(fmtstr, ...)                    \
     do {                                           \
@@ -111,37 +121,86 @@ NEVER_INLINE static void dump_backtrace_impl(FlatPtr base_pointer, bool use_ksym
     } while (0)
 
     SmapDisabler disabler;
-    if (use_ksyms && !g_kernel_symbols_available)
+    if (use_ksyms && !g_kernel_symbols_available.was_set())
         Processor::halt();
 
     struct RecognizedSymbol {
         FlatPtr address;
-        const KernelSymbol* symbol { nullptr };
+        KernelSymbol const* symbol { nullptr };
     };
+
+    struct FrameRecord {
+        FlatPtr previous_frame_pointer;
+        FlatPtr return_address;
+    };
+
+    auto safe_memcpy_frame_record_from_stack = [](FlatPtr current_frame_pointer) -> ErrorOr<FrameRecord> {
+#if ARCH(X86_64) || ARCH(AARCH64)
+        // x86_64/aarch64 frame record layout:
+        // rbp/fp+8: return address
+        // rbp/fp+0: previous base/frame pointer
+
+        FlatPtr previous_frame_pointer_and_return_address[2];
+        void* fault_at;
+        if (!safe_memcpy(previous_frame_pointer_and_return_address, bit_cast<FlatPtr*>(current_frame_pointer), sizeof(previous_frame_pointer_and_return_address), fault_at))
+            return EFAULT;
+
+        return FrameRecord {
+            .previous_frame_pointer = previous_frame_pointer_and_return_address[0],
+            .return_address = previous_frame_pointer_and_return_address[1],
+        };
+#elif ARCH(RISCV64)
+        // riscv64 frame record layout:
+        // fp-8: return address
+        // fp-16: previous frame pointer
+
+        FlatPtr previous_frame_pointer_and_return_address[2];
+        void* fault_at;
+        if (!safe_memcpy(previous_frame_pointer_and_return_address, bit_cast<FlatPtr*>(current_frame_pointer) - 2, sizeof(previous_frame_pointer_and_return_address), fault_at))
+            return EFAULT;
+
+        return FrameRecord {
+            .previous_frame_pointer = previous_frame_pointer_and_return_address[0],
+            .return_address = previous_frame_pointer_and_return_address[1],
+        };
+#else
+#    error Unknown architecture
+#endif
+    };
+
     constexpr size_t max_recognized_symbol_count = 256;
     RecognizedSymbol recognized_symbols[max_recognized_symbol_count];
     size_t recognized_symbol_count = 0;
     if (use_ksyms) {
-        FlatPtr copied_stack_ptr[2];
-        for (FlatPtr* stack_ptr = (FlatPtr*)base_pointer; stack_ptr && recognized_symbol_count < max_recognized_symbol_count; stack_ptr = (FlatPtr*)copied_stack_ptr[0]) {
-            if ((FlatPtr)stack_ptr < kernel_load_base)
+        FlatPtr current_frame_pointer = frame_pointer;
+
+        while (current_frame_pointer != 0 && recognized_symbol_count < max_recognized_symbol_count) {
+            if (current_frame_pointer < kernel_mapping_base)
                 break;
 
-            void* fault_at;
-            if (!safe_memcpy(copied_stack_ptr, stack_ptr, sizeof(copied_stack_ptr), fault_at))
+            auto frame_record_or_error = safe_memcpy_frame_record_from_stack(current_frame_pointer);
+            if (frame_record_or_error.is_error())
                 break;
-            FlatPtr retaddr = copied_stack_ptr[1];
-            recognized_symbols[recognized_symbol_count++] = { retaddr, symbolicate_kernel_address(retaddr) };
+
+            auto frame_record = frame_record_or_error.release_value();
+
+            recognized_symbols[recognized_symbol_count++] = { frame_record.return_address, symbolicate_kernel_address(frame_record.return_address) };
+            current_frame_pointer = frame_record.previous_frame_pointer;
         }
     } else {
-        void* fault_at;
-        FlatPtr copied_stack_ptr[2];
-        FlatPtr* stack_ptr = (FlatPtr*)base_pointer;
-        while (stack_ptr && safe_memcpy(copied_stack_ptr, stack_ptr, sizeof(copied_stack_ptr), fault_at)) {
-            FlatPtr retaddr = copied_stack_ptr[1];
-            PRINT_LINE("{:p} (next: {:p})", retaddr, stack_ptr ? (FlatPtr*)copied_stack_ptr[0] : 0);
-            stack_ptr = (FlatPtr*)copied_stack_ptr[0];
+        FlatPtr current_frame_pointer = frame_pointer;
+
+        while (current_frame_pointer != 0) {
+            auto frame_record_or_error = safe_memcpy_frame_record_from_stack(current_frame_pointer);
+            if (frame_record_or_error.is_error())
+                break;
+
+            auto frame_record = frame_record_or_error.release_value();
+
+            PRINT_LINE("{:p} (next: {:p})", frame_record.return_address, frame_record.previous_frame_pointer);
+            current_frame_pointer = frame_record.previous_frame_pointer;
         }
+
         return;
     }
     VERIFY(recognized_symbol_count <= max_recognized_symbol_count);
@@ -161,6 +220,12 @@ NEVER_INLINE static void dump_backtrace_impl(FlatPtr base_pointer, bool use_ksym
     }
 }
 
+void dump_backtrace_from_base_pointer(FlatPtr base_pointer)
+{
+    // FIXME: Change signature of dump_backtrace_impl to use an enum instead of a bool.
+    dump_backtrace_impl(base_pointer, /*use_ksym=*/false, PrintToScreen::No);
+}
+
 void dump_backtrace(PrintToScreen print_to_screen)
 {
     static bool in_dump_backtrace = false;
@@ -168,15 +233,9 @@ void dump_backtrace(PrintToScreen print_to_screen)
         return;
     TemporaryChange change(in_dump_backtrace, true);
     TemporaryChange disable_kmalloc_stacks(g_dump_kmalloc_stacks, false);
-    FlatPtr base_pointer;
-#if ARCH(I386)
-    asm volatile("movl %%ebp, %%eax"
-                 : "=a"(base_pointer));
-#else
-    asm volatile("movq %%rbp, %%rax"
-                 : "=a"(base_pointer));
-#endif
-    dump_backtrace_impl(base_pointer, g_kernel_symbols_available, print_to_screen);
+
+    FlatPtr base_pointer = (FlatPtr)__builtin_frame_address(0);
+    dump_backtrace_impl(base_pointer, g_kernel_symbols_available.was_set(), print_to_screen);
 }
 
 UNMAP_AFTER_INIT void load_kernel_symbol_table()

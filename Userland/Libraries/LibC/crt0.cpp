@@ -14,46 +14,40 @@
 #ifndef _DYNAMIC_LOADER
 extern "C" {
 
-extern size_t __stack_chk_guard;
-extern bool s_global_initializers_ran;
-
 int main(int, char**, char**);
 
 // Tell the compiler that this may be called from somewhere else.
-int _entry(int argc, char** argv, char** env) __attribute__((used));
+int _entry(int argc, char** argv) __attribute__((used));
 void _start(int, char**, char**) __attribute__((used));
 
 NAKED void _start(int, char**, char**)
 {
+#    if ARCH(AARCH64)
+    asm(
+        "mov x29, 0\n"
+        "mov x30, 0\n"
+        "bl _entry\n");
+#    elif ARCH(RISCV64)
+    asm(
+        "li fp, 0\n"
+        "li ra, 0\n"
+        "tail _entry@plt\n");
+#    elif ARCH(X86_64)
     asm(
         "push $0\n"
         "jmp _entry@plt\n");
+#    else
+#        error "Unknown architecture"
+#    endif
 }
 
-int _entry(int argc, char** argv, char** env)
+int _entry(int argc, char** argv)
 {
-    size_t original_stack_chk = __stack_chk_guard;
-    arc4random_buf(&__stack_chk_guard, sizeof(__stack_chk_guard));
-
-    if (__stack_chk_guard == 0)
-        __stack_chk_guard = original_stack_chk;
-
-    environ = env;
-    __environ_is_malloced = false;
     __begin_atexit_locking();
-
-    s_global_initializers_ran = true;
-
-    _init();
 
     int status = main(argc, argv, environ);
 
     exit(status);
-
-    // We should never get here, but if we ever do, make sure to
-    // restore the stack guard to the value we entered _start with.
-    // Then we won't trigger the stack canary check on the way out.
-    __stack_chk_guard = original_stack_chk;
 
     return 20150614;
 }

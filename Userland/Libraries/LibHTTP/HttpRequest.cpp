@@ -9,54 +9,85 @@
 #include <AK/StringBuilder.h>
 #include <LibHTTP/HttpRequest.h>
 #include <LibHTTP/Job.h>
+#include <LibURL/Parser.h>
 
 namespace HTTP {
 
-String HttpRequest::method_name() const
+StringView to_string_view(HttpRequest::Method method)
 {
-    switch (m_method) {
-    case Method::GET:
-        return "GET";
-    case Method::HEAD:
-        return "HEAD";
-    case Method::POST:
-        return "POST";
+    switch (method) {
+    case HttpRequest::Method::GET:
+        return "GET"sv;
+    case HttpRequest::Method::HEAD:
+        return "HEAD"sv;
+    case HttpRequest::Method::POST:
+        return "POST"sv;
+    case HttpRequest::Method::DELETE:
+        return "DELETE"sv;
+    case HttpRequest::Method::PATCH:
+        return "PATCH"sv;
+    case HttpRequest::Method::OPTIONS:
+        return "OPTIONS"sv;
+    case HttpRequest::Method::TRACE:
+        return "TRACE"sv;
+    case HttpRequest::Method::CONNECT:
+        return "CONNECT"sv;
+    case HttpRequest::Method::PUT:
+        return "PUT"sv;
     default:
         VERIFY_NOT_REACHED();
     }
 }
 
-ByteBuffer HttpRequest::to_raw_request() const
+StringView HttpRequest::method_name() const
+{
+    return to_string_view(m_method);
+}
+
+ErrorOr<ByteBuffer> HttpRequest::to_raw_request() const
 {
     StringBuilder builder;
-    builder.append(method_name());
-    builder.append(' ');
+    TRY(builder.try_append(method_name()));
+    TRY(builder.try_append(' '));
     // NOTE: The percent_encode is so that e.g. spaces are properly encoded.
-    auto path = m_url.path();
+    auto path = m_url.serialize_path();
     VERIFY(!path.is_empty());
-    builder.append(URL::percent_encode(m_url.path(), URL::PercentEncodeSet::EncodeURI));
-    if (!m_url.query().is_empty()) {
-        builder.append('?');
-        builder.append(URL::percent_encode(m_url.query(), URL::PercentEncodeSet::EncodeURI));
+    TRY(builder.try_append(URL::percent_encode(path, URL::PercentEncodeSet::EncodeURI)));
+    if (m_url.query().has_value()) {
+        TRY(builder.try_append('?'));
+        TRY(builder.try_append(*m_url.query()));
     }
-    builder.append(" HTTP/1.1\r\nHost: ");
-    builder.append(m_url.host());
-    builder.append("\r\n");
+    TRY(builder.try_append(" HTTP/1.1\r\nHost: "sv));
+    TRY(builder.try_append(TRY(m_url.serialized_host())));
+    if (m_url.port().has_value())
+        TRY(builder.try_appendff(":{}", *m_url.port()));
+    TRY(builder.try_append("\r\n"sv));
+    // Start headers.
+    bool has_content_length = false;
     for (auto& header : m_headers) {
-        builder.append(header.name);
-        builder.append(": ");
-        builder.append(header.value);
-        builder.append("\r\n");
+        if (header.name.equals_ignoring_ascii_case("Content-Length"sv))
+            has_content_length = true;
+        TRY(builder.try_append(header.name));
+        TRY(builder.try_append(": "sv));
+        TRY(builder.try_append(header.value));
+        TRY(builder.try_append("\r\n"sv));
     }
-    if (!m_body.is_empty()) {
-        builder.appendff("Content-Length: {}\r\n\r\n", m_body.size());
-        builder.append((char const*)m_body.data(), m_body.size());
+    if (!m_body.is_empty() || method() == Method::POST) {
+        // Add Content-Length header if it's not already present.
+        if (!has_content_length) {
+            TRY(builder.try_appendff("Content-Length: {}\r\n", m_body.size()));
+        }
+        // Finish headers.
+        TRY(builder.try_append("\r\n"sv));
+        TRY(builder.try_append((char const*)m_body.data(), m_body.size()));
+    } else {
+        // Finish headers.
+        TRY(builder.try_append("\r\n"sv));
     }
-    builder.append("\r\n");
     return builder.to_byte_buffer();
 }
 
-Optional<HttpRequest> HttpRequest::from_raw_request(ReadonlyBytes raw_request)
+ErrorOr<HttpRequest, HttpRequest::ParseError> HttpRequest::from_raw_request(ReadonlyBytes raw_request)
 {
     enum class State {
         InMethod,
@@ -64,6 +95,7 @@ Optional<HttpRequest> HttpRequest::from_raw_request(ReadonlyBytes raw_request)
         InProtocol,
         InHeaderName,
         InHeaderValue,
+        InBody,
     };
 
     State state { State::InMethod };
@@ -82,14 +114,16 @@ Optional<HttpRequest> HttpRequest::from_raw_request(ReadonlyBytes raw_request)
 
     Vector<u8, 256> buffer;
 
-    String method;
-    String resource;
-    String protocol;
+    Optional<unsigned> content_length;
+    ByteString method;
+    ByteString resource;
+    ByteString protocol;
     Vector<Header> headers;
     Header current_header;
+    ByteBuffer body;
 
     auto commit_and_advance_to = [&](auto& output, State new_state) {
-        output = String::copy(buffer);
+        output = ByteString::copy(buffer);
         buffer.clear();
         state = new_state;
     };
@@ -97,7 +131,7 @@ Optional<HttpRequest> HttpRequest::from_raw_request(ReadonlyBytes raw_request)
     while (index < raw_request.size()) {
         // FIXME: Figure out what the appropriate limitations should be.
         if (buffer.size() > 65536)
-            return {};
+            return ParseError::RequestTooLarge;
         switch (state) {
         case State::InMethod:
             if (peek() == ' ') {
@@ -137,14 +171,46 @@ Optional<HttpRequest> HttpRequest::from_raw_request(ReadonlyBytes raw_request)
             if (peek(0) == '\r' && peek(1) == '\n') {
                 consume();
                 consume();
-                commit_and_advance_to(current_header.value, State::InHeaderName);
+
+                // Detect end of headers
+                auto next_state = State::InHeaderName;
+                if (peek(0) == '\r' && peek(1) == '\n') {
+                    consume();
+                    consume();
+                    next_state = State::InBody;
+                }
+
+                commit_and_advance_to(current_header.value, next_state);
+
+                if (current_header.name.equals_ignoring_ascii_case("Content-Length"sv))
+                    content_length = current_header.value.to_number<unsigned>();
+
                 headers.append(move(current_header));
                 break;
             }
             buffer.append(consume());
             break;
+        case State::InBody:
+            buffer.append(consume());
+            if (index == raw_request.size()) {
+                // End of data, so store the body
+                auto maybe_body = ByteBuffer::copy(buffer);
+                if (maybe_body.is_error()) {
+                    VERIFY(maybe_body.error().code() == ENOMEM);
+                    return ParseError::OutOfMemory;
+                }
+                body = maybe_body.release_value();
+                buffer.clear();
+            }
+            break;
         }
     }
+
+    if (state != State::InBody)
+        return ParseError::RequestIncomplete;
+
+    if (content_length.has_value() && content_length.value() != body.size())
+        return ParseError::RequestIncomplete;
 
     HttpRequest request;
     if (method == "GET")
@@ -153,39 +219,76 @@ Optional<HttpRequest> HttpRequest::from_raw_request(ReadonlyBytes raw_request)
         request.m_method = Method::HEAD;
     else if (method == "POST")
         request.m_method = Method::POST;
+    else if (method == "DELETE")
+        request.set_method(HTTP::HttpRequest::Method::DELETE);
+    else if (method == "PATCH")
+        request.set_method(HTTP::HttpRequest::Method::PATCH);
+    else if (method == "OPTIONS")
+        request.set_method(HTTP::HttpRequest::Method::OPTIONS);
+    else if (method == "TRACE")
+        request.set_method(HTTP::HttpRequest::Method::TRACE);
+    else if (method == "CONNECT")
+        request.set_method(HTTP::HttpRequest::Method::CONNECT);
+    else if (method == "PUT")
+        request.set_method(HTTP::HttpRequest::Method::PUT);
     else
-        return {};
+        return ParseError::UnsupportedMethod;
 
-    request.m_resource = URL::percent_decode(resource);
     request.m_headers = move(headers);
+    auto url_parts = resource.split_limit('?', 2, SplitBehavior::KeepEmpty);
+
+    auto url_part_to_string = [](ByteString const& url_part) -> ErrorOr<String, ParseError> {
+        auto query_string_or_error = String::from_byte_string(url_part);
+        if (!query_string_or_error.is_error())
+            return query_string_or_error.release_value();
+
+        if (query_string_or_error.error().code() == ENOMEM)
+            return ParseError::OutOfMemory;
+
+        return ParseError::InvalidURL;
+    };
+
+    request.m_url.set_cannot_be_a_base_url(true);
+    if (url_parts.size() == 2) {
+        request.m_resource = url_parts[0];
+        request.m_url.set_paths({ url_parts[0] });
+        request.m_url.set_query(TRY(url_part_to_string(url_parts[1])));
+    } else {
+        request.m_resource = resource;
+        request.m_url.set_paths({ resource });
+    }
+
+    request.set_body(move(body));
 
     return request;
 }
 
-void HttpRequest::set_headers(HashMap<String, String> const& headers)
+void HttpRequest::set_headers(HashMap<ByteString, ByteString> const& headers)
 {
     for (auto& it : headers)
         m_headers.append({ it.key, it.value });
 }
 
-Optional<HttpRequest::Header> HttpRequest::get_http_basic_authentication_header(URL const& url)
+Optional<HttpRequest::Header> HttpRequest::get_http_basic_authentication_header(URL::URL const& url)
 {
     if (!url.includes_credentials())
         return {};
     StringBuilder builder;
-    builder.append(url.username());
+    builder.append(url.username().release_value_but_fixme_should_propagate_errors());
     builder.append(':');
-    builder.append(url.password());
-    auto token = encode_base64(builder.to_string().bytes());
+    builder.append(url.password().release_value_but_fixme_should_propagate_errors());
+
+    // FIXME: change to TRY() and make method fallible
+    auto token = MUST(encode_base64(MUST(builder.to_string()).bytes()));
     builder.clear();
-    builder.append("Basic ");
+    builder.append("Basic "sv);
     builder.append(token);
-    return Header { "Authorization", builder.to_string() };
+    return Header { "Authorization", builder.to_byte_string() };
 }
 
-Optional<HttpRequest::BasicAuthenticationCredentials> HttpRequest::parse_http_basic_authentication_header(String const& value)
+Optional<HttpRequest::BasicAuthenticationCredentials> HttpRequest::parse_http_basic_authentication_header(ByteString const& value)
 {
-    if (!value.starts_with("Basic ", AK::CaseSensitivity::CaseInsensitive))
+    if (!value.starts_with("Basic "sv, AK::CaseSensitivity::CaseInsensitive))
         return {};
     auto token = value.substring_view(6);
     if (token.is_empty())
@@ -193,7 +296,7 @@ Optional<HttpRequest::BasicAuthenticationCredentials> HttpRequest::parse_http_ba
     auto decoded_token_bb = decode_base64(token);
     if (decoded_token_bb.is_error())
         return {};
-    auto decoded_token = String::copy(decoded_token_bb.value());
+    auto decoded_token = ByteString::copy(decoded_token_bb.value());
     auto colon_index = decoded_token.find(':');
     if (!colon_index.has_value())
         return {};

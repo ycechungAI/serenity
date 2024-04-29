@@ -1,0 +1,274 @@
+body {
+    font-family: system-ui, sans-serif;
+    font-size: 10pt;
+
+    margin: 0;
+}
+
+.split-view {
+    width: 100vw;
+    height: 100vh;
+
+    overflow: hidden;
+}
+
+.split-view-container {
+    max-height: calc(100% - 40px);
+    min-height: 40px;
+
+    overflow: scroll;
+}
+
+.split-view-separator {
+    width: 100%;
+    height: 5px;
+
+    display: flex;
+    justify-content: center;
+
+    cursor: row-resize;
+    user-select: none;
+}
+
+.tab-controls-container {
+    position: absolute;
+    width: 100%;
+
+    padding: 4px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    z-index: 100;
+}
+
+.tab-controls {
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.tab-controls button {
+    font-size: 12px;
+    font-weight: 600;
+
+    float: left;
+    border: none;
+    outline: none;
+    cursor: pointer;
+
+    padding: 4px 8px;
+}
+
+.tab-controls :first-child {
+    border-radius: 0.5rem 0 0 0.5rem;
+}
+
+.tab-controls :last-child {
+    border-radius: 0 0.5rem 0.5rem 0;
+}
+
+.tab-content {
+    height: 100%;
+
+    display: none;
+    border-radius: 0.5rem;
+
+    margin-top: 30px;
+    padding: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+    html {
+        background-color: rgb(23, 23, 23);
+    }
+
+    .split-view-separator {
+        background-color: dimgray;
+    }
+
+    .split-view-separator circle {
+        fill: rgb(57, 57, 57);
+    }
+
+    .tab-controls-container {
+        background-color: rgb(57, 57, 57);
+    }
+
+    .tab-controls button {
+        color: white;
+        background-color: rgb(43, 42, 50);
+    }
+
+    .tab-controls button.active {
+        background-color: rgb(22 100 219);
+    }
+
+    .tab-controls button + button {
+        border-left: 1px solid rgb(96, 96, 96);
+    }
+}
+
+@media (prefers-color-scheme: light) {
+    .split-view-separator {
+        background-color: lightgray;
+    }
+
+    .split-view-separator circle {
+        fill: white;
+    }
+
+    .tab-controls-container {
+        background-color: rgb(229, 229, 229);
+    }
+
+    .tab-controls button {
+        color: black;
+        background-color: white;
+    }
+
+    .tab-controls button.active {
+        color: white;
+        background-color: rgb(28, 138, 255);
+    }
+
+    .tab-controls button + button {
+        border-left: 1px solid rgb(242, 242, 242);
+    }
+}
+
+details > :not(:first-child) {
+    display: list-item;
+    list-style: none inside;
+    margin-left: 1em;
+}
+
+.hoverable {
+    display: block;
+    padding: 1px;
+}
+
+.dom-editor {
+    width: fit-content;
+    outline: none;
+}
+
+@media (prefers-color-scheme: dark) {
+    .hoverable:hover {
+        background-color: #31383e;
+    }
+
+    .selected {
+        border: 1px dashed cyan;
+        padding: 0;
+    }
+}
+
+@media (prefers-color-scheme: light) {
+    .hoverable:hover {
+        background-color: rgb(236, 236, 236);
+    }
+
+    .selected {
+        border: 1px dashed blue;
+        padding: 0;
+    }
+}
+
+.console {
+    font-family: Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    width: 100%;
+    height: 100%;
+}
+
+.console-output {
+    height: calc(100% - 75px);
+    overflow: scroll;
+}
+
+.console-input {
+    width: 100%;
+    height: 24px;
+    padding: 4px;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+}
+
+.console-input input {
+    width: calc(100% - 60px);
+}
+
+@media (prefers-color-scheme: dark) {
+    .console-prompt {
+        color: cyan;
+    }
+
+    .console-message {
+        color: lightskyblue;
+    }
+
+    .console-warning {
+        color: orange;
+    }
+
+    .console-input {
+        background-color: rgb(57, 57, 57);
+    }
+
+    .console-input input:focus {
+        outline: 1px dashed cyan;
+    }
+}
+
+@media (prefers-color-scheme: light) {
+    .console-prompt {
+        color: blue;
+    }
+
+    .console-message {
+        color: blue;
+    }
+
+    .console-warning {
+        color: darkorange;
+    }
+
+    .console-input {
+        background-color: rgb(229, 229, 229);
+    }
+
+    .console-input input:focus {
+        outline: 1px dashed blue;
+    }
+}
+
+.property-table {
+    width: 100%;
+
+    table-layout: fixed;
+    border-collapse: collapse;
+}
+
+.property-table th {
+    position: sticky;
+    top: 0px;
+}
+
+.property-table th,
+.property-table td {
+    padding: 4px;
+    text-align: left;
+}
+
+@media (prefers-color-scheme: dark) {
+    .property-table th {
+        background-color: rgb(57, 57, 57);
+    }
+}
+
+@media (prefers-color-scheme: light) {
+    .property-table th {
+        background-color: rgb(229, 229, 229);
+    }
+}

@@ -1,88 +1,74 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include "AK/StringUtils.h"
+#include <AK/Error.h>
+#include <AK/Format.h>
+#include <AK/Platform.h>
 #include <AK/String.h>
+#include <AK/Traits.h>
+#include <AK/Types.h>
 
 namespace AK {
 
 class FlyString {
+    AK_MAKE_DEFAULT_MOVABLE(FlyString);
+    AK_MAKE_DEFAULT_COPYABLE(FlyString);
+
 public:
     FlyString() = default;
-    FlyString(const FlyString& other)
-        : m_impl(other.impl())
-    {
-    }
-    FlyString(FlyString&& other)
-        : m_impl(move(other.m_impl))
-    {
-    }
-    FlyString(const String&);
-    FlyString(StringView);
-    FlyString(const char* string)
-        : FlyString(static_cast<String>(string))
-    {
-    }
 
-    static FlyString from_fly_impl(NonnullRefPtr<StringImpl> impl)
-    {
-        VERIFY(impl->is_fly());
-        FlyString string;
-        string.m_impl = move(impl);
-        return string;
-    }
+    static ErrorOr<FlyString> from_utf8(StringView);
+    static FlyString from_utf8_without_validation(ReadonlyBytes);
+    template<typename T>
+    requires(IsOneOf<RemoveCVReference<T>, ByteString, DeprecatedFlyString, FlyString, String>)
+    static ErrorOr<String> from_utf8(T&&) = delete;
 
-    FlyString& operator=(const FlyString& other)
-    {
-        m_impl = other.m_impl;
-        return *this;
-    }
+    FlyString(String const&);
+    FlyString& operator=(String const&);
 
-    FlyString& operator=(FlyString&& other)
-    {
-        m_impl = move(other.m_impl);
-        return *this;
-    }
+    [[nodiscard]] bool is_empty() const;
+    [[nodiscard]] unsigned hash() const;
+    [[nodiscard]] u32 ascii_case_insensitive_hash() const;
 
-    bool is_empty() const { return !m_impl || !m_impl->length(); }
-    bool is_null() const { return !m_impl; }
+    explicit operator String() const;
+    String to_string() const;
 
-    bool operator==(const FlyString& other) const { return m_impl == other.m_impl; }
-    bool operator!=(const FlyString& other) const { return m_impl != other.m_impl; }
+    [[nodiscard]] Utf8View code_points() const;
+    [[nodiscard]] ReadonlyBytes bytes() const;
+    [[nodiscard]] StringView bytes_as_string_view() const;
 
-    bool operator==(const String&) const;
-    bool operator!=(const String& string) const { return !(*this == string); }
+    [[nodiscard]] ALWAYS_INLINE bool operator==(FlyString const& other) const { return m_data.raw({}) == other.m_data.raw({}); }
+    [[nodiscard]] bool operator==(String const&) const;
+    [[nodiscard]] bool operator==(StringView) const;
+    [[nodiscard]] bool operator==(char const*) const;
 
-    bool operator==(StringView) const;
-    bool operator!=(StringView string) const { return !(*this == string); }
+    [[nodiscard]] int operator<=>(FlyString const& other) const;
 
-    bool operator==(const char*) const;
-    bool operator!=(const char* string) const { return !(*this == string); }
+    static void did_destroy_fly_string_data(Badge<Detail::StringData>, Detail::StringData const&);
+    [[nodiscard]] Detail::StringBase data(Badge<String>) const;
 
-    const StringImpl* impl() const { return m_impl; }
-    const char* characters() const { return m_impl ? m_impl->characters() : nullptr; }
-    size_t length() const { return m_impl ? m_impl->length() : 0; }
+    // This is primarily interesting to unit tests.
+    [[nodiscard]] static size_t number_of_fly_strings();
 
-    ALWAYS_INLINE u32 hash() const { return m_impl ? m_impl->existing_hash() : 0; }
-    ALWAYS_INLINE StringView view() const { return m_impl ? m_impl->view() : StringView {}; }
+    // FIXME: Remove these once all code has been ported to FlyString
+    [[nodiscard]] DeprecatedFlyString to_deprecated_fly_string() const;
+    static ErrorOr<FlyString> from_deprecated_fly_string(DeprecatedFlyString const&);
+    template<typename T>
+    requires(IsSame<RemoveCVReference<T>, StringView>)
+    static ErrorOr<String> from_deprecated_fly_string(T&&) = delete;
 
-    FlyString to_lowercase() const;
+    // Compare this FlyString against another string with ASCII caseless matching.
+    [[nodiscard]] bool equals_ignoring_ascii_case(FlyString const&) const;
+    [[nodiscard]] bool equals_ignoring_ascii_case(StringView) const;
 
-    template<typename T = int>
-    Optional<T> to_int(TrimWhitespace = TrimWhitespace::Yes) const;
-    template<typename T = unsigned>
-    Optional<T> to_uint(TrimWhitespace = TrimWhitespace::Yes) const;
+    [[nodiscard]] bool starts_with_bytes(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
 
-    bool equals_ignoring_case(StringView) const;
-    bool starts_with(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
-    bool ends_with(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
-
-    static void did_destroy_impl(Badge<StringImpl>, StringImpl&);
+    [[nodiscard]] bool ends_with_bytes(StringView, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
 
     template<typename... Ts>
     [[nodiscard]] ALWAYS_INLINE constexpr bool is_one_of(Ts... strings) const
@@ -91,14 +77,36 @@ public:
     }
 
 private:
-    RefPtr<StringImpl> m_impl;
+    explicit FlyString(Detail::StringBase data)
+        : m_data(move(data))
+    {
+    }
+
+    Detail::StringBase m_data;
 };
 
 template<>
-struct Traits<FlyString> : public GenericTraits<FlyString> {
-    static unsigned hash(const FlyString& s) { return s.hash(); }
+struct Traits<FlyString> : public DefaultTraits<FlyString> {
+    static unsigned hash(FlyString const&);
+};
+
+template<>
+struct Formatter<FlyString> : Formatter<StringView> {
+    ErrorOr<void> format(FormatBuilder&, FlyString const&);
+};
+
+struct ASCIICaseInsensitiveFlyStringTraits : public Traits<String> {
+    static unsigned hash(FlyString const& s) { return s.ascii_case_insensitive_hash(); }
+    static bool equals(FlyString const& a, FlyString const& b) { return a.equals_ignoring_ascii_case(b); }
 };
 
 }
 
+[[nodiscard]] ALWAYS_INLINE AK::FlyString operator""_fly_string(char const* cstring, size_t length)
+{
+    return AK::FlyString::from_utf8(AK::StringView(cstring, length)).release_value();
+}
+
+#if USING_AK_GLOBALLY
 using AK::FlyString;
+#endif

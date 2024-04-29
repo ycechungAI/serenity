@@ -6,37 +6,40 @@
 
 #pragma once
 
+#include <AK/COWVector.h>
+#include <AK/Debug.h>
 #include <AK/HashTable.h>
 #include <AK/SourceLocation.h>
 #include <AK/Tuple.h>
+#include <AK/Vector.h>
 #include <LibWasm/Forward.h>
 #include <LibWasm/Types.h>
 
 namespace Wasm {
 
 struct Context {
-    Vector<FunctionType> types;
-    Vector<FunctionType> functions;
-    Vector<TableType> tables;
-    Vector<MemoryType> memories;
-    Vector<GlobalType> globals;
-    Vector<ValueType> elements;
-    Vector<bool> datas;
-    Vector<ValueType> locals;
-    Vector<ResultType> labels;
+    COWVector<FunctionType> types;
+    COWVector<FunctionType> functions;
+    COWVector<TableType> tables;
+    COWVector<MemoryType> memories;
+    COWVector<GlobalType> globals;
+    COWVector<ValueType> elements;
+    COWVector<bool> datas;
+    COWVector<ValueType> locals;
+    COWVector<ResultType> labels;
     Optional<ResultType> return_;
     AK::HashTable<FunctionIndex> references;
     size_t imported_function_count { 0 };
 };
 
 struct ValidationError : public Error {
-    ValidationError(String error)
-        : Error(Error::from_string_literal(error))
+    ValidationError(ByteString error)
+        : Error(Error::from_string_view(error.view()))
         , error_string(move(error))
     {
     }
 
-    String error_string;
+    ByteString error_string;
 };
 
 class Validator {
@@ -200,11 +203,11 @@ public:
         ErrorOr<void, ValidationError> take(ValueType type, SourceLocation location = SourceLocation::current())
         {
             if (is_empty())
-                return Errors::invalid("stack state", type, "<nothing>", location);
+                return Errors::invalid("stack state"sv, type, "<nothing>"sv, location);
 
             auto type_on_stack = take_last();
             if (type_on_stack != type)
-                return Errors::invalid("stack state", type, type_on_stack, location);
+                return Errors::invalid("stack state"sv, type, type_on_stack, location);
 
             return {};
         }
@@ -216,6 +219,17 @@ public:
             if (((result = take(Wasm::ValueType(kinds), location)).is_error(), ...)) {
                 return result;
             }
+            return result;
+        }
+
+        template<auto... kinds>
+        ErrorOr<void, ValidationError> take_and_put(Wasm::ValueType::Kind kind, SourceLocation location = SourceLocation::current())
+        {
+            ErrorOr<void, ValidationError> result;
+            if (((result = take(Wasm::ValueType(kinds), location)).is_error(), ...)) {
+                return result;
+            }
+            append(Wasm::ValueType(kind));
             return result;
         }
 
@@ -236,11 +250,10 @@ public:
     };
     ErrorOr<ExpressionTypeResult, ValidationError> validate(Expression const&, Vector<ValueType> const&);
     ErrorOr<void, ValidationError> validate(Instruction const& instruction, Stack& stack, bool& is_constant);
-    template<u32 opcode>
+    template<u64 opcode>
     ErrorOr<void, ValidationError> validate_instruction(Instruction const&, Stack& stack, bool& is_constant);
 
     // Types
-    bool type_is_subtype_of(ValueType const& candidate_subtype, ValueType const& candidate_supertype);
     ErrorOr<void, ValidationError> validate(Limits const&, size_t k); // n <= 2^k-1 && m? <= 2^k-1
     ErrorOr<FunctionType, ValidationError> validate(BlockType const&);
     ErrorOr<void, ValidationError> validate(FunctionType const&) { return {}; }
@@ -255,27 +268,27 @@ private:
     }
 
     struct Errors {
-        static ValidationError invalid(StringView name) { return String::formatted("Invalid {}", name); }
+        static ValidationError invalid(StringView name) { return ByteString::formatted("Invalid {}", name); }
 
         template<typename Expected, typename Given>
         static ValidationError invalid(StringView name, Expected expected, Given given, SourceLocation location = SourceLocation::current())
         {
             if constexpr (WASM_VALIDATOR_DEBUG)
-                return String::formatted("Invalid {} in {}, expected {} but got {}", name, find_instruction_name(location), expected, given);
+                return ByteString::formatted("Invalid {} in {}, expected {} but got {}", name, find_instruction_name(location), expected, given);
             else
-                return String::formatted("Invalid {}, expected {} but got {}", name, expected, given);
+                return ByteString::formatted("Invalid {}, expected {} but got {}", name, expected, given);
         }
 
         template<typename... Args>
         static ValidationError non_conforming_types(StringView name, Args... args)
         {
-            return String::formatted("Non-conforming types for {}: {}", name, Vector { args... });
+            return ByteString::formatted("Non-conforming types for {}: {}", name, Vector { args... });
         }
 
-        static ValidationError duplicate_export_name(StringView name) { return String::formatted("Duplicate exported name '{}'", name); }
+        static ValidationError duplicate_export_name(StringView name) { return ByteString::formatted("Duplicate exported name '{}'", name); }
 
         template<typename T, typename U, typename V>
-        static ValidationError out_of_bounds(StringView name, V value, T min, U max) { return String::formatted("Value {} for {} is out of bounds ({},{})", value, name, min, max); }
+        static ValidationError out_of_bounds(StringView name, V value, T min, U max) { return ByteString::formatted("Value {} for {} is out of bounds ({},{})", value, name, min, max); }
 
         template<typename... Expected>
         static ValidationError invalid_stack_state(Stack const& stack, Tuple<Expected...> expected, SourceLocation location = SourceLocation::current())
@@ -287,13 +300,13 @@ private:
             else
                 builder.appendff("Invalid stack state in <unknown>: ");
 
-            builder.append("Expected [ ");
+            builder.append("Expected [ "sv);
 
             expected.apply_as_args([&]<typename... Ts>(Ts const&... args) {
                 (builder.appendff("{} ", args), ...);
             });
 
-            builder.append("], but found [ ");
+            builder.append("], but found [ "sv);
 
             auto actual_size = stack.actual_size();
             for (size_t i = 1; i <= min(count, actual_size); ++i) {
@@ -305,12 +318,12 @@ private:
                     break;
                 }
             }
-            builder.append("]");
-            return { builder.to_string() };
+            builder.append(']');
+            return { builder.to_byte_string() };
         }
 
     private:
-        static String find_instruction_name(SourceLocation const&);
+        static ByteString find_instruction_name(SourceLocation const&);
     };
 
     enum class ChildScopeKind {
@@ -333,6 +346,7 @@ private:
     Vector<ChildScopeKind> m_entered_scopes;
     Vector<BlockDetails> m_block_details;
     Vector<FunctionType> m_entered_blocks;
+    COWVector<GlobalType> m_globals_without_internal_globals;
 };
 
 }

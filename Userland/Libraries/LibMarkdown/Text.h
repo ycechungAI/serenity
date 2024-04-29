@@ -8,11 +8,11 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Noncopyable.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/OwnPtr.h>
 #include <AK/RecursionDecision.h>
-#include <AK/String.h>
+#include <AK/Vector.h>
 #include <LibMarkdown/Forward.h>
 
 namespace Markdown {
@@ -23,6 +23,7 @@ public:
     public:
         virtual void render_to_html(StringBuilder& builder) const = 0;
         virtual void render_for_terminal(StringBuilder& builder) const = 0;
+        virtual void render_for_raw_print(StringBuilder& builder) const = 0;
         virtual size_t terminal_length() const = 0;
         virtual RecursionDecision walk(Visitor&) const = 0;
 
@@ -42,6 +43,7 @@ public:
 
         virtual void render_to_html(StringBuilder& builder) const override;
         virtual void render_for_terminal(StringBuilder& builder) const override;
+        virtual void render_for_raw_print(StringBuilder& builder) const override;
         virtual size_t terminal_length() const override;
         virtual RecursionDecision walk(Visitor&) const override;
     };
@@ -57,6 +59,7 @@ public:
 
         virtual void render_to_html(StringBuilder& builder) const override;
         virtual void render_for_terminal(StringBuilder& builder) const override;
+        virtual void render_for_raw_print(StringBuilder& builder) const override;
         virtual size_t terminal_length() const override;
         virtual RecursionDecision walk(Visitor&) const override;
     };
@@ -65,13 +68,14 @@ public:
     public:
         virtual void render_to_html(StringBuilder& builder) const override;
         virtual void render_for_terminal(StringBuilder& builder) const override;
+        virtual void render_for_raw_print(StringBuilder& builder) const override;
         virtual size_t terminal_length() const override;
         virtual RecursionDecision walk(Visitor&) const override;
     };
 
     class TextNode : public Node {
     public:
-        String text;
+        ByteString text;
         bool collapsible;
 
         TextNode(StringView text)
@@ -88,6 +92,7 @@ public:
 
         virtual void render_to_html(StringBuilder& builder) const override;
         virtual void render_for_terminal(StringBuilder& builder) const override;
+        virtual void render_for_raw_print(StringBuilder& builder) const override;
         virtual size_t terminal_length() const override;
         virtual RecursionDecision walk(Visitor&) const override;
     };
@@ -96,42 +101,69 @@ public:
     public:
         bool is_image;
         NonnullOwnPtr<Node> text;
-        String href;
+        ByteString href;
+        Optional<int> image_width;
+        Optional<int> image_height;
 
-        LinkNode(bool is_image, NonnullOwnPtr<Node> text, String href)
+        LinkNode(bool is_image, NonnullOwnPtr<Node> text, ByteString href, Optional<int> image_width, Optional<int> image_height)
             : is_image(is_image)
             , text(move(text))
             , href(move(href))
+            , image_width(image_width)
+            , image_height(image_height)
         {
         }
 
+        bool has_image_dimensions() const
+        {
+            return image_width.has_value() || image_height.has_value();
+        }
         virtual void render_to_html(StringBuilder& builder) const override;
         virtual void render_for_terminal(StringBuilder& builder) const override;
+        virtual void render_for_raw_print(StringBuilder& builder) const override;
         virtual size_t terminal_length() const override;
         virtual RecursionDecision walk(Visitor&) const override;
     };
 
     class MultiNode : public Node {
     public:
-        NonnullOwnPtrVector<Node> children;
+        Vector<NonnullOwnPtr<Node>> children;
 
         virtual void render_to_html(StringBuilder& builder) const override;
         virtual void render_for_terminal(StringBuilder& builder) const override;
+        virtual void render_for_raw_print(StringBuilder& builder) const override;
+        virtual size_t terminal_length() const override;
+        virtual RecursionDecision walk(Visitor&) const override;
+    };
+
+    class StrikeThroughNode : public Node {
+    public:
+        NonnullOwnPtr<Node> striked_text;
+
+        StrikeThroughNode(NonnullOwnPtr<Node> striked_text)
+            : striked_text(move(striked_text))
+        {
+        }
+
+        virtual void render_to_html(StringBuilder& builder) const override;
+        virtual void render_for_terminal(StringBuilder& builder) const override;
+        virtual void render_for_raw_print(StringBuilder& builder) const override;
         virtual size_t terminal_length() const override;
         virtual RecursionDecision walk(Visitor&) const override;
     };
 
     size_t terminal_length() const;
 
-    String render_to_html() const;
-    String render_for_terminal() const;
+    ByteString render_to_html() const;
+    ByteString render_for_terminal() const;
+    ByteString render_for_raw_print() const;
     RecursionDecision walk(Visitor&) const;
 
     static Text parse(StringView);
 
 private:
     struct Token {
-        String data;
+        ByteString data;
         // Flanking basically means that a delimiter run has a non-whitespace,
         // non-punctuation character on the corresponding side. For a more exact
         // definition, see the CommonMark spec.
@@ -172,6 +204,7 @@ private:
     static NonnullOwnPtr<Node> parse_emph(Vector<Token>::ConstIterator& tokens, bool in_link);
     static NonnullOwnPtr<Node> parse_code(Vector<Token>::ConstIterator& tokens);
     static NonnullOwnPtr<Node> parse_link(Vector<Token>::ConstIterator& tokens);
+    static NonnullOwnPtr<Node> parse_strike_through(Vector<Token>::ConstIterator& tokens);
 
     OwnPtr<Node> m_node;
 };

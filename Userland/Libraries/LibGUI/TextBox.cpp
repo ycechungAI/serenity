@@ -1,23 +1,26 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2022, the SerenityOS developers.
+ * Copyright (c) 2023, Cameron Youell <cameronyouell@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Vector.h>
+#include <LibGUI/Painter.h>
 #include <LibGUI/TextBox.h>
+#include <LibGfx/Palette.h>
 
 REGISTER_WIDGET(GUI, TextBox)
 REGISTER_WIDGET(GUI, PasswordBox)
-REGISTER_WIDGET(GUI, UrlBox)
 
 namespace GUI {
 
 TextBox::TextBox()
     : TextEditor(TextEditor::SingleLine)
 {
-    set_min_width(32);
-    set_fixed_height(22);
+    set_min_size({ SpecialDimension::Shrink });
+    set_preferred_size({ SpecialDimension::OpportunisticGrow, SpecialDimension::Shrink });
 }
 
 void TextBox::keydown_event(GUI::KeyEvent& event)
@@ -65,44 +68,62 @@ void TextBox::add_current_text_to_history()
     m_saved_input = {};
 }
 
-void TextBox::add_input_to_history(String input)
+void TextBox::add_input_to_history(ByteString input)
 {
     m_history.append(move(input));
     m_history_index++;
 }
 
+constexpr u32 password_box_substitution_code_point = '*';
+
 PasswordBox::PasswordBox()
     : TextBox()
 {
-    set_substitution_code_point('*');
+    set_substitution_code_point(password_box_substitution_code_point);
     set_text_is_secret(true);
+    REGISTER_BOOL_PROPERTY("show_reveal_button", is_showing_reveal_button, set_show_reveal_button);
 }
 
-UrlBox::UrlBox()
-    : TextBox()
+Gfx::IntRect PasswordBox::reveal_password_button_rect() const
 {
-    set_auto_focusable(false);
+    constexpr i32 button_box_margin = 3;
+    auto button_box_size = height() - button_box_margin - button_box_margin;
+    return { width() - button_box_size - button_box_margin, button_box_margin, button_box_size, button_box_size };
 }
 
-void UrlBox::focusout_event(GUI::FocusEvent& event)
+void PasswordBox::paint_event(PaintEvent& event)
 {
-    set_focus_transition(true);
+    TextBox::paint_event(event);
 
-    TextBox::focusout_event(event);
+    if (is_showing_reveal_button()) {
+        auto button_rect = reveal_password_button_rect();
+
+        Painter painter(*this);
+        painter.add_clip_rect(event.rect());
+
+        auto icon_color = palette().button_text();
+        if (substitution_code_point().has_value())
+            icon_color = palette().disabled_text_front();
+
+        i32 dot_indicator_padding = height() / 5;
+
+        Gfx::IntRect dot_indicator_rect = { button_rect.x() + dot_indicator_padding, button_rect.y() + dot_indicator_padding, button_rect.width() - dot_indicator_padding * 2, button_rect.height() - dot_indicator_padding * 2 };
+        painter.fill_ellipse(dot_indicator_rect, icon_color);
+
+        Gfx::IntPoint arc_start_point { dot_indicator_rect.x() - dot_indicator_padding / 2, dot_indicator_rect.y() + dot_indicator_padding / 2 };
+        Gfx::IntPoint arc_end_point = { dot_indicator_rect.right() - 1 + dot_indicator_padding / 2, dot_indicator_rect.top() + dot_indicator_padding / 2 };
+        Gfx::IntPoint arc_center_point = { dot_indicator_rect.center().x(), dot_indicator_rect.top() - dot_indicator_padding };
+        painter.draw_quadratic_bezier_curve(arc_center_point, arc_start_point, arc_end_point, icon_color, 1);
+    }
 }
 
-void UrlBox::mousedown_event(GUI::MouseEvent& event)
+void PasswordBox::mousedown_event(GUI::MouseEvent& event)
 {
-    if (is_displayonly())
-        return;
-
-    if (event.button() != MouseButton::Primary)
-        return;
-
-    if (is_focus_transition()) {
-        TextBox::select_current_line();
-
-        set_focus_transition(false);
+    if (is_showing_reveal_button() && reveal_password_button_rect().contains(event.position())) {
+        Optional<u32> next_substitution_code_point;
+        if (!substitution_code_point().has_value())
+            next_substitution_code_point = password_box_substitution_code_point;
+        set_substitution_code_point(next_substitution_code_point);
     } else {
         TextBox::mousedown_event(event);
     }

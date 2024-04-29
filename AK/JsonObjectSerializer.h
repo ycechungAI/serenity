@@ -36,15 +36,10 @@ public:
     {
     }
 
-    JsonObjectSerializer(const JsonObjectSerializer&) = delete;
-
-    ~JsonObjectSerializer()
-    {
-        VERIFY(m_finished);
-    }
+    JsonObjectSerializer(JsonObjectSerializer const&) = delete;
 
 #ifndef KERNEL
-    ErrorOr<void> add(StringView key, const JsonValue& value)
+    ErrorOr<void> add(StringView key, JsonValue const& value)
     {
         TRY(begin_item(key));
         value.serialize(m_builder);
@@ -68,7 +63,7 @@ public:
     }
 
 #ifndef KERNEL
-    ErrorOr<void> add(StringView key, const String& value)
+    ErrorOr<void> add(StringView key, ByteString const& value)
     {
         TRY(begin_item(key));
         if constexpr (IsLegacyBuilder<Builder>) {
@@ -84,16 +79,16 @@ public:
     }
 #endif
 
-    ErrorOr<void> add(StringView key, const char* value)
+    ErrorOr<void> add(StringView key, char const* value)
     {
         TRY(begin_item(key));
         if constexpr (IsLegacyBuilder<Builder>) {
             TRY(m_builder.try_append('"'));
-            TRY(m_builder.try_append_escaped_for_json(value));
+            TRY(m_builder.try_append_escaped_for_json({ value, __builtin_strlen(value) }));
             TRY(m_builder.try_append('"'));
         } else {
             TRY(m_builder.append('"'));
-            TRY(m_builder.append_escaped_for_json(value));
+            TRY(m_builder.append_escaped_for_json({ value, __builtin_strlen(value) }));
             TRY(m_builder.append('"'));
         }
         return {};
@@ -103,9 +98,9 @@ public:
     {
         TRY(begin_item(key));
         if constexpr (IsLegacyBuilder<Builder>)
-            TRY(m_builder.try_append(value ? "true" : "false"));
+            TRY(m_builder.try_append(value ? "true"sv : "false"sv));
         else
-            TRY(m_builder.append(value ? "true" : "false"));
+            TRY(m_builder.append(value ? "true"sv : "false"sv));
         return {};
     }
 
@@ -234,11 +229,11 @@ private:
         if constexpr (IsLegacyBuilder<Builder>) {
             TRY(m_builder.try_append('"'));
             TRY(m_builder.try_append_escaped_for_json(key));
-            TRY(m_builder.try_append("\":"));
+            TRY(m_builder.try_append("\":"sv));
         } else {
             TRY(m_builder.append('"'));
             TRY(m_builder.append_escaped_for_json(key));
-            TRY(m_builder.append("\":"));
+            TRY(m_builder.append("\":"sv));
         }
         return {};
     }
@@ -267,4 +262,6 @@ ErrorOr<JsonObjectSerializer<Builder>> JsonArraySerializer<Builder>::add_object(
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::JsonObjectSerializer;
+#endif

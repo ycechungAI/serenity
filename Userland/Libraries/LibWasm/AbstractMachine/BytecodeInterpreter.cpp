@@ -1,16 +1,23 @@
 /*
  * Copyright (c) 2021, Ali Mohammad Pur <mpfard@serenityos.org>
+ * Copyright (c) 2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/ByteReader.h>
 #include <AK/Debug.h>
+#include <AK/Endian.h>
+#include <AK/MemoryStream.h>
+#include <AK/SIMDExtras.h>
 #include <LibWasm/AbstractMachine/AbstractMachine.h>
 #include <LibWasm/AbstractMachine/BytecodeInterpreter.h>
 #include <LibWasm/AbstractMachine/Configuration.h>
 #include <LibWasm/AbstractMachine/Operators.h>
 #include <LibWasm/Opcode.h>
 #include <LibWasm/Printer/Printer.h>
+
+using namespace AK::SIMD;
 
 namespace Wasm {
 
@@ -31,7 +38,7 @@ namespace Wasm {
 
 void BytecodeInterpreter::interpret(Configuration& configuration)
 {
-    m_trap.clear();
+    m_trap = Empty {};
     auto& instructions = configuration.frame().expression().instructions();
     auto max_ip_value = InstructionPointer { instructions.size() };
     auto& current_ip_value = configuration.ip();
@@ -48,7 +55,7 @@ void BytecodeInterpreter::interpret(Configuration& configuration)
         auto& instruction = instructions[current_ip_value.value()];
         auto old_ip = current_ip_value;
         interpret(configuration, current_ip_value, instruction);
-        if (m_trap.has_value())
+        if (did_trap())
             return;
         if (current_ip_value == old_ip) // If no jump occurred
             ++current_ip_value;
@@ -81,13 +88,13 @@ void BytecodeInterpreter::branch_to_label(Configuration& configuration, LabelInd
 template<typename ReadType, typename PushType>
 void BytecodeInterpreter::load_and_push(Configuration& configuration, Instruction const& instruction)
 {
-    auto& address = configuration.frame().module().memories().first();
+    auto& arg = instruction.arguments().get<Instruction::MemoryArgument>();
+    auto& address = configuration.frame().module().memories()[arg.memory_index.value()];
     auto memory = configuration.store().get(address);
     if (!memory) {
         m_trap = Trap { "Nonexistent memory" };
         return;
     }
-    auto& arg = instruction.arguments().get<Instruction::MemoryArgument>();
     auto& entry = configuration.stack().peek();
     auto base = entry.get<Value>().to<i32>();
     if (!base.has_value()) {
@@ -105,6 +112,148 @@ void BytecodeInterpreter::load_and_push(Configuration& configuration, Instructio
     dbgln_if(WASM_TRACE_DEBUG, "load({} : {}) -> stack", instance_address, sizeof(ReadType));
     auto slice = memory->data().bytes().slice(instance_address, sizeof(ReadType));
     configuration.stack().peek() = Value(static_cast<PushType>(read_value<ReadType>(slice)));
+}
+
+template<typename TDst, typename TSrc>
+ALWAYS_INLINE static TDst convert_vector(TSrc v)
+{
+    return __builtin_convertvector(v, TDst);
+}
+
+template<size_t M, size_t N, template<typename> typename SetSign>
+void BytecodeInterpreter::load_and_push_mxn(Configuration& configuration, Instruction const& instruction)
+{
+    auto& arg = instruction.arguments().get<Instruction::MemoryArgument>();
+    auto& address = configuration.frame().module().memories()[arg.memory_index.value()];
+    auto memory = configuration.store().get(address);
+    if (!memory) {
+        m_trap = Trap { "Nonexistent memory" };
+        return;
+    }
+    auto& entry = configuration.stack().peek();
+    auto base = entry.get<Value>().to<i32>();
+    if (!base.has_value()) {
+        m_trap = Trap { "Memory access out of bounds" };
+        return;
+    }
+    u64 instance_address = static_cast<u64>(bit_cast<u32>(base.value())) + arg.offset;
+    Checked addition { instance_address };
+    addition += M * N / 8;
+    if (addition.has_overflow() || addition.value() > memory->size()) {
+        m_trap = Trap { "Memory access out of bounds" };
+        dbgln("LibWasm: Memory access out of bounds (expected {} to be less than or equal to {})", instance_address + M * N / 8, memory->size());
+        return;
+    }
+    dbgln_if(WASM_TRACE_DEBUG, "vec-load({} : {}) -> stack", instance_address, M * N / 8);
+    auto slice = memory->data().bytes().slice(instance_address, M * N / 8);
+    using V64 = NativeVectorType<M, N, SetSign>;
+    using V128 = NativeVectorType<M * 2, N, SetSign>;
+
+    V64 bytes { 0 };
+    if (bit_cast<FlatPtr>(slice.data()) % sizeof(V64) == 0)
+        bytes = *bit_cast<V64*>(slice.data());
+    else
+        ByteReader::load(slice.data(), bytes);
+
+    configuration.stack().peek() = Value(bit_cast<u128>(convert_vector<V128>(bytes)));
+}
+
+template<size_t M>
+void BytecodeInterpreter::load_and_push_m_splat(Configuration& configuration, Instruction const& instruction)
+{
+    auto& arg = instruction.arguments().get<Instruction::MemoryArgument>();
+    auto& address = configuration.frame().module().memories()[arg.memory_index.value()];
+    auto memory = configuration.store().get(address);
+    if (!memory) {
+        m_trap = Trap { "Nonexistent memory" };
+        return;
+    }
+    auto& entry = configuration.stack().peek();
+    auto base = entry.get<Value>().to<i32>();
+    if (!base.has_value()) {
+        m_trap = Trap { "Memory access out of bounds" };
+        return;
+    }
+    u64 instance_address = static_cast<u64>(bit_cast<u32>(base.value())) + arg.offset;
+    Checked addition { instance_address };
+    addition += M / 8;
+    if (addition.has_overflow() || addition.value() > memory->size()) {
+        m_trap = Trap { "Memory access out of bounds" };
+        dbgln("LibWasm: Memory access out of bounds (expected {} to be less than or equal to {})", instance_address + M / 8, memory->size());
+        return;
+    }
+    dbgln_if(WASM_TRACE_DEBUG, "vec-splat({} : {}) -> stack", instance_address, M / 8);
+    auto slice = memory->data().bytes().slice(instance_address, M / 8);
+    auto value = read_value<NativeIntegralType<M>>(slice);
+    set_top_m_splat<M, NativeIntegralType>(configuration, value);
+}
+
+template<size_t M, template<size_t> typename NativeType>
+void BytecodeInterpreter::set_top_m_splat(Wasm::Configuration& configuration, NativeType<M> value)
+{
+    auto push = [&](auto result) {
+        configuration.stack().peek() = Value(bit_cast<u128>(result));
+    };
+
+    if constexpr (IsFloatingPoint<NativeType<32>>) {
+        if constexpr (M == 32) // 32 -> 32x4
+            push(expand4(value));
+        else if constexpr (M == 64) // 64 -> 64x2
+            push(f64x2 { value, value });
+        else
+            static_assert(DependentFalse<NativeType<M>>, "Invalid vector size");
+    } else {
+        if constexpr (M == 8) // 8 -> 8x4 -> 32x4
+            push(expand4(bit_cast<u32>(u8x4 { value, value, value, value })));
+        else if constexpr (M == 16) // 16 -> 16x2 -> 32x4
+            push(expand4(bit_cast<u32>(u16x2 { value, value })));
+        else if constexpr (M == 32) // 32 -> 32x4
+            push(expand4(value));
+        else if constexpr (M == 64) // 64 -> 64x2
+            push(u64x2 { value, value });
+        else
+            static_assert(DependentFalse<NativeType<M>>, "Invalid vector size");
+    }
+}
+
+template<size_t M, template<size_t> typename NativeType>
+void BytecodeInterpreter::pop_and_push_m_splat(Wasm::Configuration& configuration, Instruction const&)
+{
+    using PopT = Conditional<M <= 32, NativeType<32>, NativeType<64>>;
+    using ReadT = NativeType<M>;
+    auto entry = configuration.stack().peek();
+    auto value = static_cast<ReadT>(*entry.get<Value>().to<PopT>());
+    dbgln_if(WASM_TRACE_DEBUG, "stack({}) -> splat({})", value, M);
+    set_top_m_splat<M, NativeType>(configuration, value);
+}
+
+template<typename M, template<typename> typename SetSign, typename VectorType>
+Optional<VectorType> BytecodeInterpreter::pop_vector(Configuration& configuration)
+{
+    auto value = peek_vector<M, SetSign, VectorType>(configuration);
+    if (value.has_value())
+        configuration.stack().pop();
+    return value;
+}
+
+template<typename M, template<typename> typename SetSign, typename VectorType>
+Optional<VectorType> BytecodeInterpreter::peek_vector(Configuration& configuration)
+{
+    auto& entry = configuration.stack().peek();
+    auto value = entry.get<Value>().value().get_pointer<u128>();
+    if (!value)
+        return {};
+    auto vector = bit_cast<VectorType>(*value);
+    dbgln_if(WASM_TRACE_DEBUG, "stack({}) peek-> vector({:x})", *value, bit_cast<u128>(vector));
+    return vector;
+}
+
+template<typename VectorType>
+static u128 shuffle_vector(VectorType values, VectorType indices)
+{
+    auto vector = bit_cast<VectorType>(values);
+    auto indices_vector = bit_cast<VectorType>(indices);
+    return bit_cast<u128>(shuffle(vector, indices_vector));
 }
 
 void BytecodeInterpreter::call_address(Configuration& configuration, FunctionAddress address)
@@ -137,23 +286,28 @@ void BytecodeInterpreter::call_address(Configuration& configuration, FunctionAdd
         return;
     }
 
+    if (result.is_completion()) {
+        m_trap = move(result.completion());
+        return;
+    }
+
     configuration.stack().entries().ensure_capacity(configuration.stack().size() + result.values().size());
-    for (auto& entry : result.values())
+    for (auto& entry : result.values().in_reverse())
         configuration.stack().entries().unchecked_append(move(entry));
 }
 
-template<typename PopType, typename PushType, typename Operator>
-void BytecodeInterpreter::binary_numeric_operation(Configuration& configuration)
+template<typename PopTypeLHS, typename PushType, typename Operator, typename PopTypeRHS, typename... Args>
+void BytecodeInterpreter::binary_numeric_operation(Configuration& configuration, Args&&... args)
 {
     auto rhs_entry = configuration.stack().pop();
     auto& lhs_entry = configuration.stack().peek();
     auto rhs_ptr = rhs_entry.get_pointer<Value>();
     auto lhs_ptr = lhs_entry.get_pointer<Value>();
-    auto rhs = rhs_ptr->to<PopType>();
-    auto lhs = lhs_ptr->to<PopType>();
+    auto rhs = rhs_ptr->to<PopTypeRHS>();
+    auto lhs = lhs_ptr->to<PopTypeLHS>();
     PushType result;
-    auto call_result = Operator {}(lhs.value(), rhs.value());
-    if constexpr (IsSpecializationOf<decltype(call_result), AK::Result>) {
+    auto call_result = Operator { forward<Args>(args)... }(lhs.value(), rhs.value());
+    if constexpr (IsSpecializationOf<decltype(call_result), AK::ErrorOr>) {
         if (call_result.is_error()) {
             trap_if_not(false, call_result.error());
             return;
@@ -166,15 +320,15 @@ void BytecodeInterpreter::binary_numeric_operation(Configuration& configuration)
     lhs_entry = Value(result);
 }
 
-template<typename PopType, typename PushType, typename Operator>
-void BytecodeInterpreter::unary_operation(Configuration& configuration)
+template<typename PopType, typename PushType, typename Operator, typename... Args>
+void BytecodeInterpreter::unary_operation(Configuration& configuration, Args&&... args)
 {
     auto& entry = configuration.stack().peek();
     auto entry_ptr = entry.get_pointer<Value>();
     auto value = entry_ptr->to<PopType>();
-    auto call_result = Operator {}(*value);
+    auto call_result = Operator { forward<Args>(args)... }(*value);
     PushType result;
-    if constexpr (IsSpecializationOf<decltype(call_result), AK::Result>) {
+    if constexpr (IsSpecializationOf<decltype(call_result), AK::ErrorOr>) {
         if (call_result.is_error()) {
             trap_if_not(false, call_result.error());
             return;
@@ -199,11 +353,9 @@ template<>
 struct ConvertToRaw<float> {
     u32 operator()(float value)
     {
-        LittleEndian<u32> res;
         ReadonlyBytes bytes { &value, sizeof(float) };
-        InputMemoryStream stream { bytes };
-        stream >> res;
-        VERIFY(!stream.has_any_error());
+        FixedMemoryStream stream { bytes };
+        auto res = stream.read_value<LittleEndian<u32>>().release_value_but_fixme_should_propagate_errors();
         return static_cast<u32>(res);
     }
 };
@@ -212,11 +364,9 @@ template<>
 struct ConvertToRaw<double> {
     u64 operator()(double value)
     {
-        LittleEndian<u64> res;
         ReadonlyBytes bytes { &value, sizeof(double) };
-        InputMemoryStream stream { bytes };
-        stream >> res;
-        VERIFY(!stream.has_any_error());
+        FixedMemoryStream stream { bytes };
+        auto res = stream.read_value<LittleEndian<u64>>().release_value_but_fixme_should_propagate_errors();
         return static_cast<u64>(res);
     }
 };
@@ -234,9 +384,9 @@ void BytecodeInterpreter::pop_and_store(Configuration& configuration, Instructio
 
 void BytecodeInterpreter::store_to_memory(Configuration& configuration, Instruction const& instruction, ReadonlyBytes data, i32 base)
 {
-    auto& address = configuration.frame().module().memories().first();
-    auto memory = configuration.store().get(address);
     auto& arg = instruction.arguments().get<Instruction::MemoryArgument>();
+    auto& address = configuration.frame().module().memories()[arg.memory_index.value()];
+    auto memory = configuration.store().get(address);
     u64 instance_address = static_cast<u64>(bit_cast<u32>(base)) + arg.offset;
     Checked addition { instance_address };
     addition += data.size();
@@ -252,35 +402,34 @@ void BytecodeInterpreter::store_to_memory(Configuration& configuration, Instruct
 template<typename T>
 T BytecodeInterpreter::read_value(ReadonlyBytes data)
 {
-    LittleEndian<T> value;
-    InputMemoryStream stream { data };
-    stream >> value;
-    if (stream.handle_any_error()) {
+    FixedMemoryStream stream { data };
+    auto value_or_error = stream.read_value<LittleEndian<T>>();
+    if (value_or_error.is_error()) {
         dbgln("Read from {} failed", data.data());
         m_trap = Trap { "Read from memory failed" };
     }
-    return value;
+    return value_or_error.release_value();
 }
 
 template<>
 float BytecodeInterpreter::read_value<float>(ReadonlyBytes data)
 {
-    InputMemoryStream stream { data };
-    LittleEndian<u32> raw_value;
-    stream >> raw_value;
-    if (stream.handle_any_error())
+    FixedMemoryStream stream { data };
+    auto raw_value_or_error = stream.read_value<LittleEndian<u32>>();
+    if (raw_value_or_error.is_error())
         m_trap = Trap { "Read from memory failed" };
+    auto raw_value = raw_value_or_error.release_value();
     return bit_cast<float>(static_cast<u32>(raw_value));
 }
 
 template<>
 double BytecodeInterpreter::read_value<double>(ReadonlyBytes data)
 {
-    InputMemoryStream stream { data };
-    LittleEndian<u64> raw_value;
-    stream >> raw_value;
-    if (stream.handle_any_error())
+    FixedMemoryStream stream { data };
+    auto raw_value_or_error = stream.read_value<LittleEndian<u64>>();
+    if (raw_value_or_error.is_error())
         m_trap = Trap { "Read from memory failed" };
+    auto raw_value = raw_value_or_error.release_value();
     return bit_cast<double>(static_cast<u64>(raw_value));
 }
 
@@ -461,18 +610,21 @@ void BytecodeInterpreter::interpret(Configuration& configuration, InstructionPoi
     }
     case Instructions::return_.value(): {
         auto& frame = configuration.frame();
-        size_t end = configuration.stack().size() - frame.arity();
-        size_t start = end;
-        for (; start + 1 > 0 && start < configuration.stack().size(); --start) {
-            auto& entry = configuration.stack().entries()[start];
-            if (entry.has<Frame>()) {
-                // Leave the frame, _and_ its label.
-                start += 2;
-                break;
+        Checked checked_index { configuration.stack().size() };
+        checked_index -= frame.arity();
+        VERIFY(!checked_index.has_overflow());
+
+        auto index = checked_index.value();
+        size_t i = 1;
+        for (; i <= index; ++i) {
+            auto& entry = configuration.stack().entries()[index - i];
+            if (entry.has<Label>()) {
+                if (configuration.stack().entries()[index - i - 1].has<Frame>())
+                    break;
             }
         }
 
-        configuration.stack().entries().remove(start, end - start);
+        configuration.stack().entries().remove(index - i + 1, i - 1);
 
         // Jump past the call/indirect instruction
         configuration.ip() = configuration.frame().expression().instructions().size();
@@ -593,7 +745,8 @@ void BytecodeInterpreter::interpret(Configuration& configuration, InstructionPoi
         return;
     }
     case Instructions::memory_size.value(): {
-        auto address = configuration.frame().module().memories()[0];
+        auto& args = instruction.arguments().get<Instruction::MemoryIndexArgument>();
+        auto address = configuration.frame().module().memories()[args.memory_index.value()];
         auto instance = configuration.store().get(address);
         auto pages = instance->size() / Constants::page_size;
         dbgln_if(WASM_TRACE_DEBUG, "memory.size -> stack({})", pages);
@@ -601,7 +754,8 @@ void BytecodeInterpreter::interpret(Configuration& configuration, InstructionPoi
         return;
     }
     case Instructions::memory_grow.value(): {
-        auto address = configuration.frame().module().memories()[0];
+        auto& args = instruction.arguments().get<Instruction::MemoryIndexArgument>();
+        auto address = configuration.frame().module().memories()[args.memory_index.value()];
         auto instance = configuration.store().get(address);
         i32 old_pages = instance->size() / Constants::page_size;
         auto& entry = configuration.stack().peek();
@@ -611,6 +765,98 @@ void BytecodeInterpreter::interpret(Configuration& configuration, InstructionPoi
             configuration.stack().peek() = Value((i32)old_pages);
         else
             configuration.stack().peek() = Value((i32)-1);
+        return;
+    }
+    // https://webassembly.github.io/spec/core/bikeshed/#exec-memory-fill
+    case Instructions::memory_fill.value(): {
+        auto& args = instruction.arguments().get<Instruction::MemoryIndexArgument>();
+        auto address = configuration.frame().module().memories()[args.memory_index.value()];
+        auto instance = configuration.store().get(address);
+        auto count = configuration.stack().pop().get<Value>().to<i32>().value();
+        auto value = configuration.stack().pop().get<Value>().to<i32>().value();
+        auto destination_offset = configuration.stack().pop().get<Value>().to<i32>().value();
+
+        TRAP_IF_NOT(static_cast<size_t>(destination_offset + count) <= instance->data().size());
+
+        if (count == 0)
+            return;
+
+        Instruction synthetic_store_instruction {
+            Instructions::i32_store8,
+            Instruction::MemoryArgument { 0, 0 }
+        };
+
+        for (auto i = 0; i < count; ++i) {
+            store_to_memory(configuration, synthetic_store_instruction, { &value, sizeof(value) }, destination_offset);
+        }
+        return;
+    }
+    // https://webassembly.github.io/spec/core/bikeshed/#exec-memory-copy
+    case Instructions::memory_copy.value(): {
+        auto& args = instruction.arguments().get<Instruction::MemoryCopyArgs>();
+        auto source_address = configuration.frame().module().memories()[args.src_index.value()];
+        auto destination_address = configuration.frame().module().memories()[args.dst_index.value()];
+        auto source_instance = configuration.store().get(source_address);
+        auto destination_instance = configuration.store().get(destination_address);
+
+        auto count = configuration.stack().pop().get<Value>().to<i32>().value();
+        auto source_offset = configuration.stack().pop().get<Value>().to<i32>().value();
+        auto destination_offset = configuration.stack().pop().get<Value>().to<i32>().value();
+
+        TRAP_IF_NOT(static_cast<size_t>(source_offset + count) <= source_instance->data().size());
+        TRAP_IF_NOT(static_cast<size_t>(destination_offset + count) <= destination_instance->data().size());
+
+        if (count == 0)
+            return;
+
+        Instruction synthetic_store_instruction {
+            Instructions::i32_store8,
+            Instruction::MemoryArgument { 0, 0, args.dst_index }
+        };
+
+        if (destination_offset <= source_offset) {
+            for (auto i = 0; i < count; ++i) {
+                auto value = source_instance->data()[source_offset + i];
+                store_to_memory(configuration, synthetic_store_instruction, { &value, sizeof(value) }, destination_offset + i);
+            }
+        } else {
+            for (auto i = count - 1; i >= 0; --i) {
+                auto value = source_instance->data()[source_offset + i];
+                store_to_memory(configuration, synthetic_store_instruction, { &value, sizeof(value) }, destination_offset + i);
+            }
+        }
+
+        return;
+    }
+    // https://webassembly.github.io/spec/core/bikeshed/#exec-memory-init
+    case Instructions::memory_init.value(): {
+        auto& args = instruction.arguments().get<Instruction::MemoryInitArgs>();
+        auto& data_address = configuration.frame().module().datas()[args.data_index.value()];
+        auto& data = *configuration.store().get(data_address);
+        auto count = *configuration.stack().pop().get<Value>().to<i32>();
+        auto source_offset = *configuration.stack().pop().get<Value>().to<i32>();
+        auto destination_offset = *configuration.stack().pop().get<Value>().to<i32>();
+
+        TRAP_IF_NOT(count > 0);
+        TRAP_IF_NOT(source_offset + count > 0);
+        TRAP_IF_NOT(static_cast<size_t>(source_offset + count) <= data.size());
+
+        Instruction synthetic_store_instruction {
+            Instructions::i32_store8,
+            Instruction::MemoryArgument { 0, 0, args.memory_index }
+        };
+
+        for (size_t i = 0; i < (size_t)count; ++i) {
+            auto value = data.data()[source_offset + i];
+            store_to_memory(configuration, synthetic_store_instruction, { &value, sizeof(value) }, destination_offset + i);
+        }
+        return;
+    }
+    // https://webassembly.github.io/spec/core/bikeshed/#exec-data-drop
+    case Instructions::data_drop.value(): {
+        auto data_index = instruction.arguments().get<DataIndex>();
+        auto data_address = configuration.frame().module().datas()[data_index.value()];
+        *configuration.store().get(data_address) = DataInstance({});
         return;
     }
     case Instructions::table_get.value():
@@ -923,32 +1169,339 @@ void BytecodeInterpreter::interpret(Configuration& configuration, InstructionPoi
         return unary_operation<double, i64, Operators::SaturatingTruncate<i64>>(configuration);
     case Instructions::i64_trunc_sat_f64_u.value():
         return unary_operation<double, i64, Operators::SaturatingTruncate<u64>>(configuration);
-    case Instructions::memory_init.value(): {
-        auto data_index = instruction.arguments().get<DataIndex>();
-        auto& data_address = configuration.frame().module().datas()[data_index.value()];
-        auto& data = *configuration.store().get(data_address);
-        auto count = *configuration.stack().pop().get<Value>().to<i32>();
-        auto source_offset = *configuration.stack().pop().get<Value>().to<i32>();
-        auto destination_offset = *configuration.stack().pop().get<Value>().to<i32>();
-
-        TRAP_IF_NOT(count > 0);
-        TRAP_IF_NOT(source_offset + count > 0);
-        TRAP_IF_NOT(static_cast<size_t>(source_offset + count) <= data.size());
-
-        Instruction synthetic_store_instruction {
-            Instructions::i32_store8,
-            Instruction::MemoryArgument { 0, 0 }
-        };
-
-        for (size_t i = 0; i < (size_t)count; ++i) {
-            auto value = data.data()[source_offset + i];
-            store_to_memory(configuration, synthetic_store_instruction, { &value, sizeof(value) }, destination_offset + i);
-        }
+    case Instructions::v128_const.value():
+        configuration.stack().push(Value(instruction.arguments().get<u128>()));
+        return;
+    case Instructions::v128_load.value():
+        return load_and_push<u128, u128>(configuration, instruction);
+    case Instructions::v128_load8x8_s.value():
+        return load_and_push_mxn<8, 8, MakeSigned>(configuration, instruction);
+    case Instructions::v128_load8x8_u.value():
+        return load_and_push_mxn<8, 8, MakeUnsigned>(configuration, instruction);
+    case Instructions::v128_load16x4_s.value():
+        return load_and_push_mxn<16, 4, MakeSigned>(configuration, instruction);
+    case Instructions::v128_load16x4_u.value():
+        return load_and_push_mxn<16, 4, MakeUnsigned>(configuration, instruction);
+    case Instructions::v128_load32x2_s.value():
+        return load_and_push_mxn<32, 2, MakeSigned>(configuration, instruction);
+    case Instructions::v128_load32x2_u.value():
+        return load_and_push_mxn<32, 2, MakeUnsigned>(configuration, instruction);
+    case Instructions::v128_load8_splat.value():
+        return load_and_push_m_splat<8>(configuration, instruction);
+    case Instructions::v128_load16_splat.value():
+        return load_and_push_m_splat<16>(configuration, instruction);
+    case Instructions::v128_load32_splat.value():
+        return load_and_push_m_splat<32>(configuration, instruction);
+    case Instructions::v128_load64_splat.value():
+        return load_and_push_m_splat<64>(configuration, instruction);
+    case Instructions::i8x16_splat.value():
+        return pop_and_push_m_splat<8, NativeIntegralType>(configuration, instruction);
+    case Instructions::i16x8_splat.value():
+        return pop_and_push_m_splat<16, NativeIntegralType>(configuration, instruction);
+    case Instructions::i32x4_splat.value():
+        return pop_and_push_m_splat<32, NativeIntegralType>(configuration, instruction);
+    case Instructions::i64x2_splat.value():
+        return pop_and_push_m_splat<64, NativeIntegralType>(configuration, instruction);
+    case Instructions::f32x4_splat.value():
+        return pop_and_push_m_splat<32, NativeFloatingType>(configuration, instruction);
+    case Instructions::f64x2_splat.value():
+        return pop_and_push_m_splat<64, NativeFloatingType>(configuration, instruction);
+    case Instructions::i8x16_shuffle.value(): {
+        auto indices = pop_vector<u8, MakeSigned>(configuration);
+        TRAP_IF_NOT(indices.has_value());
+        auto vector = peek_vector<u8, MakeSigned>(configuration);
+        TRAP_IF_NOT(vector.has_value());
+        auto result = shuffle_vector(vector.value(), indices.value());
+        configuration.stack().peek() = Value(result);
         return;
     }
-    case Instructions::data_drop.value():
-    case Instructions::memory_copy.value():
-    case Instructions::memory_fill.value():
+    case Instructions::v128_store.value():
+        return pop_and_store<u128, u128>(configuration, instruction);
+    case Instructions::i8x16_shl.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftLeft<16>, i32>(configuration);
+    case Instructions::i8x16_shr_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftRight<16, MakeUnsigned>, i32>(configuration);
+    case Instructions::i8x16_shr_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftRight<16, MakeSigned>, i32>(configuration);
+    case Instructions::i16x8_shl.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftLeft<8>, i32>(configuration);
+    case Instructions::i16x8_shr_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftRight<8, MakeUnsigned>, i32>(configuration);
+    case Instructions::i16x8_shr_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftRight<8, MakeSigned>, i32>(configuration);
+    case Instructions::i32x4_shl.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftLeft<4>, i32>(configuration);
+    case Instructions::i32x4_shr_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftRight<4, MakeUnsigned>, i32>(configuration);
+    case Instructions::i32x4_shr_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftRight<4, MakeSigned>, i32>(configuration);
+    case Instructions::i64x2_shl.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftLeft<2>, i32>(configuration);
+    case Instructions::i64x2_shr_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftRight<2, MakeUnsigned>, i32>(configuration);
+    case Instructions::i64x2_shr_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorShiftRight<2, MakeSigned>, i32>(configuration);
+    case Instructions::i8x16_swizzle.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorSwizzle>(configuration);
+    case Instructions::i8x16_extract_lane_s.value():
+        return unary_operation<u128, i8, Operators::VectorExtractLane<16, MakeSigned>>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::i8x16_extract_lane_u.value():
+        return unary_operation<u128, u8, Operators::VectorExtractLane<16, MakeUnsigned>>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::i16x8_extract_lane_s.value():
+        return unary_operation<u128, i16, Operators::VectorExtractLane<8, MakeSigned>>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::i16x8_extract_lane_u.value():
+        return unary_operation<u128, u16, Operators::VectorExtractLane<8, MakeUnsigned>>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::i32x4_extract_lane.value():
+        return unary_operation<u128, i32, Operators::VectorExtractLane<4, MakeSigned>>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::i64x2_extract_lane.value():
+        return unary_operation<u128, i64, Operators::VectorExtractLane<2, MakeSigned>>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::f32x4_extract_lane.value():
+        return unary_operation<u128, float, Operators::VectorExtractLaneFloat<4>>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::f64x2_extract_lane.value():
+        return unary_operation<u128, double, Operators::VectorExtractLaneFloat<2>>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::i8x16_replace_lane.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorReplaceLane<16, i32>, i32>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::i16x8_replace_lane.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorReplaceLane<8, i32>, i32>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::i32x4_replace_lane.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorReplaceLane<4>, i32>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::i64x2_replace_lane.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorReplaceLane<2>, i64>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::f32x4_replace_lane.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorReplaceLane<4, float>, float>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::f64x2_replace_lane.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorReplaceLane<2, double>, double>(configuration, instruction.arguments().get<Instruction::LaneIndex>().lane);
+    case Instructions::i8x16_eq.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<16, Operators::Equals>>(configuration);
+    case Instructions::i8x16_ne.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<16, Operators::NotEquals>>(configuration);
+    case Instructions::i8x16_lt_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<16, Operators::LessThan, MakeSigned>>(configuration);
+    case Instructions::i8x16_lt_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<16, Operators::LessThan, MakeUnsigned>>(configuration);
+    case Instructions::i8x16_gt_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<16, Operators::GreaterThan, MakeSigned>>(configuration);
+    case Instructions::i8x16_gt_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<16, Operators::GreaterThan, MakeUnsigned>>(configuration);
+    case Instructions::i8x16_le_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<16, Operators::LessThanOrEquals, MakeSigned>>(configuration);
+    case Instructions::i8x16_le_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<16, Operators::LessThanOrEquals, MakeUnsigned>>(configuration);
+    case Instructions::i8x16_ge_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<16, Operators::GreaterThanOrEquals, MakeSigned>>(configuration);
+    case Instructions::i8x16_ge_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<16, Operators::GreaterThanOrEquals, MakeUnsigned>>(configuration);
+    case Instructions::i16x8_eq.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<8, Operators::Equals>>(configuration);
+    case Instructions::i16x8_ne.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<8, Operators::NotEquals>>(configuration);
+    case Instructions::i16x8_lt_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<8, Operators::LessThan, MakeSigned>>(configuration);
+    case Instructions::i16x8_lt_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<8, Operators::LessThan, MakeUnsigned>>(configuration);
+    case Instructions::i16x8_gt_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<8, Operators::GreaterThan, MakeSigned>>(configuration);
+    case Instructions::i16x8_gt_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<8, Operators::GreaterThan, MakeUnsigned>>(configuration);
+    case Instructions::i16x8_le_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<8, Operators::LessThanOrEquals, MakeSigned>>(configuration);
+    case Instructions::i16x8_le_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<8, Operators::LessThanOrEquals, MakeUnsigned>>(configuration);
+    case Instructions::i16x8_ge_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<8, Operators::GreaterThanOrEquals, MakeSigned>>(configuration);
+    case Instructions::i16x8_ge_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<8, Operators::GreaterThanOrEquals, MakeUnsigned>>(configuration);
+    case Instructions::i32x4_eq.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<4, Operators::Equals>>(configuration);
+    case Instructions::i32x4_ne.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<4, Operators::NotEquals>>(configuration);
+    case Instructions::i32x4_lt_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<4, Operators::LessThan, MakeSigned>>(configuration);
+    case Instructions::i32x4_lt_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<4, Operators::LessThan, MakeUnsigned>>(configuration);
+    case Instructions::i32x4_gt_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<4, Operators::GreaterThan, MakeSigned>>(configuration);
+    case Instructions::i32x4_gt_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<4, Operators::GreaterThan, MakeUnsigned>>(configuration);
+    case Instructions::i32x4_le_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<4, Operators::LessThanOrEquals, MakeSigned>>(configuration);
+    case Instructions::i32x4_le_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<4, Operators::LessThanOrEquals, MakeUnsigned>>(configuration);
+    case Instructions::i32x4_ge_s.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<4, Operators::GreaterThanOrEquals, MakeSigned>>(configuration);
+    case Instructions::i32x4_ge_u.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorCmpOp<4, Operators::GreaterThanOrEquals, MakeUnsigned>>(configuration);
+    case Instructions::f32x4_eq.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<4, Operators::Equals>>(configuration);
+    case Instructions::f32x4_ne.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<4, Operators::NotEquals>>(configuration);
+    case Instructions::f32x4_lt.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<4, Operators::LessThan>>(configuration);
+    case Instructions::f32x4_gt.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<4, Operators::GreaterThan>>(configuration);
+    case Instructions::f32x4_le.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<4, Operators::LessThanOrEquals>>(configuration);
+    case Instructions::f32x4_ge.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<4, Operators::GreaterThanOrEquals>>(configuration);
+    case Instructions::f64x2_eq.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<2, Operators::Equals>>(configuration);
+    case Instructions::f64x2_ne.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<2, Operators::NotEquals>>(configuration);
+    case Instructions::f64x2_lt.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<2, Operators::LessThan>>(configuration);
+    case Instructions::f64x2_gt.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<2, Operators::GreaterThan>>(configuration);
+    case Instructions::f64x2_le.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<2, Operators::LessThanOrEquals>>(configuration);
+    case Instructions::f64x2_ge.value():
+        return binary_numeric_operation<u128, u128, Operators::VectorFloatCmpOp<2, Operators::GreaterThanOrEquals>>(configuration);
+    case Instructions::v128_not.value():
+    case Instructions::v128_and.value():
+    case Instructions::v128_andnot.value():
+    case Instructions::v128_or.value():
+    case Instructions::v128_xor.value():
+    case Instructions::v128_bitselect.value():
+    case Instructions::v128_any_true.value():
+    case Instructions::v128_load8_lane.value():
+    case Instructions::v128_load16_lane.value():
+    case Instructions::v128_load32_lane.value():
+    case Instructions::v128_load64_lane.value():
+    case Instructions::v128_store8_lane.value():
+    case Instructions::v128_store16_lane.value():
+    case Instructions::v128_store32_lane.value():
+    case Instructions::v128_store64_lane.value():
+    case Instructions::v128_load32_zero.value():
+    case Instructions::v128_load64_zero.value():
+    case Instructions::f32x4_demote_f64x2_zero.value():
+    case Instructions::f64x2_promote_low_f32x4.value():
+    case Instructions::i8x16_abs.value():
+    case Instructions::i8x16_neg.value():
+    case Instructions::i8x16_popcnt.value():
+    case Instructions::i8x16_all_true.value():
+    case Instructions::i8x16_bitmask.value():
+    case Instructions::i8x16_narrow_i16x8_s.value():
+    case Instructions::i8x16_narrow_i16x8_u.value():
+    case Instructions::f32x4_ceil.value():
+    case Instructions::f32x4_floor.value():
+    case Instructions::f32x4_trunc.value():
+    case Instructions::f32x4_nearest.value():
+    case Instructions::i8x16_add.value():
+    case Instructions::i8x16_add_sat_s.value():
+    case Instructions::i8x16_add_sat_u.value():
+    case Instructions::i8x16_sub.value():
+    case Instructions::i8x16_sub_sat_s.value():
+    case Instructions::i8x16_sub_sat_u.value():
+    case Instructions::f64x2_ceil.value():
+    case Instructions::f64x2_floor.value():
+    case Instructions::i8x16_min_s.value():
+    case Instructions::i8x16_min_u.value():
+    case Instructions::i8x16_max_s.value():
+    case Instructions::i8x16_max_u.value():
+    case Instructions::f64x2_trunc.value():
+    case Instructions::i8x16_avgr_u.value():
+    case Instructions::i16x8_extadd_pairwise_i8x16_s.value():
+    case Instructions::i16x8_extadd_pairwise_i8x16_u.value():
+    case Instructions::i32x4_extadd_pairwise_i16x8_s.value():
+    case Instructions::i32x4_extadd_pairwise_i16x8_u.value():
+    case Instructions::i16x8_abs.value():
+    case Instructions::i16x8_neg.value():
+    case Instructions::i16x8_q15mulr_sat_s.value():
+    case Instructions::i16x8_all_true.value():
+    case Instructions::i16x8_bitmask.value():
+    case Instructions::i16x8_narrow_i32x4_s.value():
+    case Instructions::i16x8_narrow_i32x4_u.value():
+    case Instructions::i16x8_extend_low_i8x16_s.value():
+    case Instructions::i16x8_extend_high_i8x16_s.value():
+    case Instructions::i16x8_extend_low_i8x16_u.value():
+    case Instructions::i16x8_extend_high_i8x16_u.value():
+    case Instructions::i16x8_add.value():
+    case Instructions::i16x8_add_sat_s.value():
+    case Instructions::i16x8_add_sat_u.value():
+    case Instructions::i16x8_sub.value():
+    case Instructions::i16x8_sub_sat_s.value():
+    case Instructions::i16x8_sub_sat_u.value():
+    case Instructions::f64x2_nearest.value():
+    case Instructions::i16x8_mul.value():
+    case Instructions::i16x8_min_s.value():
+    case Instructions::i16x8_min_u.value():
+    case Instructions::i16x8_max_s.value():
+    case Instructions::i16x8_max_u.value():
+    case Instructions::i16x8_avgr_u.value():
+    case Instructions::i16x8_extmul_low_i8x16_s.value():
+    case Instructions::i16x8_extmul_high_i8x16_s.value():
+    case Instructions::i16x8_extmul_low_i8x16_u.value():
+    case Instructions::i16x8_extmul_high_i8x16_u.value():
+    case Instructions::i32x4_abs.value():
+    case Instructions::i32x4_neg.value():
+    case Instructions::i32x4_all_true.value():
+    case Instructions::i32x4_bitmask.value():
+    case Instructions::i32x4_extend_low_i16x8_s.value():
+    case Instructions::i32x4_extend_high_i16x8_s.value():
+    case Instructions::i32x4_extend_low_i16x8_u.value():
+    case Instructions::i32x4_extend_high_i16x8_u.value():
+    case Instructions::i32x4_add.value():
+    case Instructions::i32x4_sub.value():
+    case Instructions::i32x4_mul.value():
+    case Instructions::i32x4_min_s.value():
+    case Instructions::i32x4_min_u.value():
+    case Instructions::i32x4_max_s.value():
+    case Instructions::i32x4_max_u.value():
+    case Instructions::i32x4_dot_i16x8_s.value():
+    case Instructions::i32x4_extmul_low_i16x8_s.value():
+    case Instructions::i32x4_extmul_high_i16x8_s.value():
+    case Instructions::i32x4_extmul_low_i16x8_u.value():
+    case Instructions::i32x4_extmul_high_i16x8_u.value():
+    case Instructions::i64x2_abs.value():
+    case Instructions::i64x2_neg.value():
+    case Instructions::i64x2_all_true.value():
+    case Instructions::i64x2_bitmask.value():
+    case Instructions::i64x2_extend_low_i32x4_s.value():
+    case Instructions::i64x2_extend_high_i32x4_s.value():
+    case Instructions::i64x2_extend_low_i32x4_u.value():
+    case Instructions::i64x2_extend_high_i32x4_u.value():
+    case Instructions::i64x2_add.value():
+    case Instructions::i64x2_sub.value():
+    case Instructions::i64x2_mul.value():
+    case Instructions::i64x2_eq.value():
+    case Instructions::i64x2_ne.value():
+    case Instructions::i64x2_lt_s.value():
+    case Instructions::i64x2_gt_s.value():
+    case Instructions::i64x2_le_s.value():
+    case Instructions::i64x2_ge_s.value():
+    case Instructions::i64x2_extmul_low_i32x4_s.value():
+    case Instructions::i64x2_extmul_high_i32x4_s.value():
+    case Instructions::i64x2_extmul_low_i32x4_u.value():
+    case Instructions::i64x2_extmul_high_i32x4_u.value():
+    case Instructions::f32x4_abs.value():
+    case Instructions::f32x4_neg.value():
+    case Instructions::f32x4_sqrt.value():
+    case Instructions::f32x4_add.value():
+    case Instructions::f32x4_sub.value():
+    case Instructions::f32x4_mul.value():
+    case Instructions::f32x4_div.value():
+    case Instructions::f32x4_min.value():
+    case Instructions::f32x4_max.value():
+    case Instructions::f32x4_pmin.value():
+    case Instructions::f32x4_pmax.value():
+    case Instructions::f64x2_abs.value():
+    case Instructions::f64x2_neg.value():
+    case Instructions::f64x2_sqrt.value():
+    case Instructions::f64x2_add.value():
+    case Instructions::f64x2_sub.value():
+    case Instructions::f64x2_mul.value():
+    case Instructions::f64x2_div.value():
+    case Instructions::f64x2_min.value():
+    case Instructions::f64x2_max.value():
+    case Instructions::f64x2_pmin.value():
+    case Instructions::f64x2_pmax.value():
+    case Instructions::i32x4_trunc_sat_f32x4_s.value():
+    case Instructions::i32x4_trunc_sat_f32x4_u.value():
+    case Instructions::f32x4_convert_i32x4_s.value():
+    case Instructions::f32x4_convert_i32x4_u.value():
+    case Instructions::i32x4_trunc_sat_f64x2_s_zero.value():
+    case Instructions::i32x4_trunc_sat_f64x2_u_zero.value():
+    case Instructions::f64x2_convert_low_i32x4_s.value():
+    case Instructions::f64x2_convert_low_i32x4_u.value():
     case Instructions::table_init.value():
     case Instructions::elem_drop.value():
     case Instructions::table_copy.value():
@@ -957,8 +1510,8 @@ void BytecodeInterpreter::interpret(Configuration& configuration, InstructionPoi
     case Instructions::table_fill.value():
     default:
     unimplemented:;
-        dbgln("Instruction '{}' not implemented", instruction_name(instruction.opcode()));
-        m_trap = Trap { String::formatted("Unimplemented instruction {}", instruction_name(instruction.opcode())) };
+        dbgln_if(WASM_TRACE_DEBUG, "Instruction '{}' not implemented", instruction_name(instruction.opcode()));
+        m_trap = Trap { ByteString::formatted("Unimplemented instruction {}", instruction_name(instruction.opcode())) };
         return;
     }
 }

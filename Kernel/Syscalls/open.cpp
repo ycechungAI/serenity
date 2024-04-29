@@ -4,17 +4,19 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/RefPtr.h>
 #include <Kernel/Debug.h>
 #include <Kernel/FileSystem/Custody.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
+#include <Kernel/Library/KLexicalPath.h>
 #include <Kernel/Net/LocalSocket.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
-ErrorOr<FlatPtr> Process::sys$open(Userspace<const Syscall::SC_open_params*> user_params)
+ErrorOr<FlatPtr> Process::open_impl(Userspace<Syscall::SC_open_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     auto params = TRY(copy_typed_from_user(user_params));
 
     int dirfd = params.dirfd;
@@ -27,35 +29,34 @@ ErrorOr<FlatPtr> Process::sys$open(Userspace<const Syscall::SC_open_params*> use
     if (options & O_UNLINK_INTERNAL)
         return EINVAL;
 
-    if (options & O_WRONLY)
-        TRY(require_promise(Pledge::wpath));
-    else if (options & O_RDONLY)
-        TRY(require_promise(Pledge::rpath));
+    auto path = TRY(get_syscall_path_argument(params.path));
 
-    if (options & O_CREAT)
-        TRY(require_promise(Pledge::cpath));
+    // Disable checking open pledges when building userspace with coverage
+    // so that all processes can write out coverage data even with pledges
+    bool skip_pledge_verification = false;
+
+#ifdef SKIP_PATH_VALIDATION_FOR_COVERAGE_INSTRUMENTATION
+    if (KLexicalPath::basename(path->view()).ends_with(".profraw"sv))
+        skip_pledge_verification = true;
+#endif
+    if (!skip_pledge_verification) {
+        if (options & O_WRONLY)
+            TRY(require_promise(Pledge::wpath));
+        else if (options & O_RDONLY)
+            TRY(require_promise(Pledge::rpath));
+
+        if (options & O_CREAT)
+            TRY(require_promise(Pledge::cpath));
+    }
 
     // Ignore everything except permission bits.
     mode &= 0777;
 
-    auto path = TRY(get_syscall_path_argument(params.path));
-
     dbgln_if(IO_DEBUG, "sys$open(dirfd={}, path='{}', options={}, mode={})", dirfd, path->view(), options, mode);
 
     auto fd_allocation = TRY(allocate_fd());
-    RefPtr<Custody> base;
-    if (dirfd == AT_FDCWD) {
-        base = current_directory();
-    } else {
-        auto base_description = TRY(open_file_description(dirfd));
-        if (!base_description->is_directory())
-            return ENOTDIR;
-        if (!base_description->custody())
-            return EINVAL;
-        base = base_description->custody();
-    }
-
-    auto description = TRY(VirtualFileSystem::the().open(path->view(), options, mode & ~umask(), *base));
+    auto base = TRY(custody_for_dirfd(dirfd));
+    auto description = TRY(VirtualFileSystem::the().open(credentials(), path->view(), options, mode & ~umask(), *base));
 
     if (description->inode() && description->inode()->bound_socket())
         return ENXIO;
@@ -67,9 +68,9 @@ ErrorOr<FlatPtr> Process::sys$open(Userspace<const Syscall::SC_open_params*> use
     });
 }
 
-ErrorOr<FlatPtr> Process::sys$close(int fd)
+ErrorOr<FlatPtr> Process::close_impl(int fd)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::stdio));
     auto description = TRY(open_file_description(fd));
     auto result = description->close();

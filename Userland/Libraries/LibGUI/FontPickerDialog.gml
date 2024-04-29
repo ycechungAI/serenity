@@ -1,4 +1,4 @@
-@GUI::Widget {
+@GUI::FontPickerDialogWidget {
     fill_with_background_color: true
     layout: @GUI::VerticalBoxLayout {
         margins: [4, 4, 4, 4]
@@ -48,6 +48,7 @@
 
             @GUI::SpinBox {
                 name: "size_spin_box"
+                min: 0
             }
 
             @GUI::ListView {
@@ -71,18 +72,16 @@
         fixed_height: 22
         layout: @GUI::HorizontalBoxLayout {}
 
-        @GUI::Widget {}
+        @GUI::Layout::Spacer {}
 
-        @GUI::Button {
+        @GUI::DialogButton {
             name: "ok_button"
             text: "OK"
-            fixed_width: 80
         }
 
-        @GUI::Button {
+        @GUI::DialogButton {
             name: "cancel_button"
             text: "Cancel"
-            fixed_width: 80
         }
     }
 }

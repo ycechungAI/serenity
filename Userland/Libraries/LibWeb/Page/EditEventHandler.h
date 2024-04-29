@@ -7,25 +7,27 @@
 #pragma once
 
 #include <AK/Types.h>
+#include <LibJS/Forward.h>
 #include <LibWeb/Forward.h>
 
 namespace Web {
 
 class EditEventHandler {
 public:
-    explicit EditEventHandler(HTML::BrowsingContext& browsing_context)
-        : m_browsing_context(browsing_context)
+    explicit EditEventHandler(HTML::Navigable& navigable)
+        : m_navigable(navigable)
     {
     }
 
     virtual ~EditEventHandler() = default;
 
-    virtual void handle_delete_character_after(const DOM::Position&);
+    virtual void handle_delete_character_after(JS::NonnullGCPtr<DOM::Position>);
     virtual void handle_delete(DOM::Range&);
-    virtual void handle_insert(DOM::Position, u32 code_point);
+    virtual void handle_insert(JS::NonnullGCPtr<DOM::Position>, u32 code_point);
+    virtual void handle_insert(JS::NonnullGCPtr<DOM::Position>, String);
 
 private:
-    HTML::BrowsingContext& m_browsing_context;
+    JS::NonnullGCPtr<HTML::Navigable> m_navigable;
 };
 
 }

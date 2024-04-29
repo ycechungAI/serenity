@@ -41,15 +41,10 @@ public:
     {
     }
 
-    JsonArraySerializer(const JsonArraySerializer&) = delete;
-
-    ~JsonArraySerializer()
-    {
-        VERIFY(m_finished);
-    }
+    JsonArraySerializer(JsonArraySerializer const&) = delete;
 
 #ifndef KERNEL
-    ErrorOr<void> add(const JsonValue& value)
+    ErrorOr<void> add(JsonValue const& value)
     {
         TRY(begin_item());
         value.serialize(m_builder);
@@ -73,7 +68,7 @@ public:
     }
 
 #ifndef KERNEL
-    ErrorOr<void> add(const String& value)
+    ErrorOr<void> add(ByteString const& value)
     {
         TRY(begin_item());
         if constexpr (IsLegacyBuilder<Builder>) {
@@ -89,7 +84,7 @@ public:
     }
 #endif
 
-    ErrorOr<void> add(const char* value)
+    ErrorOr<void> add(char const* value)
     {
         TRY(begin_item());
         if constexpr (IsLegacyBuilder<Builder>) {
@@ -230,4 +225,6 @@ struct JsonArraySerializer<void> {
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::JsonArraySerializer;
+#endif

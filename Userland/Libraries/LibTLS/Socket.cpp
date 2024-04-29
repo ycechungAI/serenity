@@ -7,8 +7,8 @@
 #include <AK/Debug.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/EventLoop.h>
+#include <LibCore/Promise.h>
 #include <LibCore/Timer.h>
-#include <LibCrypto/PK/Code/EMSA_PSS.h>
 #include <LibTLS/TLSv12.h>
 
 // Each record can hold at most 18432 bytes, leaving some headroom and rounding down to
@@ -18,41 +18,20 @@ constexpr static size_t MaximumApplicationDataChunkSize = 16 * KiB;
 
 namespace TLS {
 
-ErrorOr<size_t> TLSv12::read(Bytes bytes)
+ErrorOr<Bytes> TLSv12::read_some(Bytes bytes)
 {
     m_eof = false;
     auto size_to_read = min(bytes.size(), m_context.application_buffer.size());
     if (size_to_read == 0) {
         m_eof = true;
-        return 0;
+        return Bytes {};
     }
 
-    m_context.application_buffer.span().slice(0, size_to_read).copy_to(bytes);
-    m_context.application_buffer = m_context.application_buffer.slice(size_to_read, m_context.application_buffer.size() - size_to_read);
-    return size_to_read;
+    m_context.application_buffer.transfer(bytes, size_to_read);
+    return Bytes { bytes.data(), size_to_read };
 }
 
-String TLSv12::read_line(size_t max_size)
-{
-    if (!can_read_line())
-        return {};
-
-    auto* start = m_context.application_buffer.data();
-    auto* newline = (u8*)memchr(m_context.application_buffer.data(), '\n', m_context.application_buffer.size());
-    VERIFY(newline);
-
-    size_t offset = newline - start;
-
-    if (offset > max_size)
-        return {};
-
-    String line { bit_cast<char const*>(start), offset, Chomp };
-    m_context.application_buffer = m_context.application_buffer.slice(offset + 1, m_context.application_buffer.size() - offset - 1);
-
-    return line;
-}
-
-ErrorOr<size_t> TLSv12::write(ReadonlyBytes bytes)
+ErrorOr<size_t> TLSv12::write_some(ReadonlyBytes bytes)
 {
     if (m_context.connection_status != ConnectionStatus::Established) {
         dbgln_if(TLS_DEBUG, "write request while not connected");
@@ -60,7 +39,7 @@ ErrorOr<size_t> TLSv12::write(ReadonlyBytes bytes)
     }
 
     for (size_t offset = 0; offset < bytes.size(); offset += MaximumApplicationDataChunkSize) {
-        PacketBuilder builder { MessageType::ApplicationData, m_context.options.version, bytes.size() - offset };
+        PacketBuilder builder { ContentType::APPLICATION_DATA, m_context.options.version, bytes.size() - offset };
         builder.append(bytes.slice(offset, min(bytes.size() - offset, MaximumApplicationDataChunkSize)));
         auto packet = builder.build();
 
@@ -71,47 +50,42 @@ ErrorOr<size_t> TLSv12::write(ReadonlyBytes bytes)
     return bytes.size();
 }
 
-ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect(const String& host, u16 port, Options options)
+ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect(ByteString const& host, u16 port, Options options)
 {
-    Core::EventLoop loop;
-    OwnPtr<Core::Stream::Socket> tcp_socket = TRY(Core::Stream::TCPSocket::connect(host, port));
+    auto promise = Core::Promise<Empty>::construct();
+    OwnPtr<Core::Socket> tcp_socket = TRY(Core::TCPSocket::connect(host, port));
     TRY(tcp_socket->set_blocking(false));
     auto tls_socket = make<TLSv12>(move(tcp_socket), move(options));
     tls_socket->set_sni(host);
     tls_socket->on_connected = [&] {
-        loop.quit(0);
+        promise->resolve({});
     };
     tls_socket->on_tls_error = [&](auto alert) {
-        loop.quit(256 - to_underlying(alert));
+        tls_socket->try_disambiguate_error();
+        promise->reject(AK::Error::from_string_view(enum_to_string(alert)));
     };
-    auto result = loop.exec();
-    if (result == 0)
-        return tls_socket;
 
-    tls_socket->try_disambiguate_error();
-    // FIXME: Should return richer information here.
-    return AK::Error::from_string_literal(alert_name(static_cast<AlertDescription>(256 - result)));
+    TRY(promise->await());
+    tls_socket->m_context.should_expect_successful_read = true;
+    return tls_socket;
 }
 
-ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect(const String& host, Core::Stream::Socket& underlying_stream, Options options)
+ErrorOr<NonnullOwnPtr<TLSv12>> TLSv12::connect(ByteString const& host, Core::Socket& underlying_stream, Options options)
 {
-    StreamVariantType socket { &underlying_stream };
+    auto promise = Core::Promise<Empty>::construct();
+    TRY(underlying_stream.set_blocking(false));
     auto tls_socket = make<TLSv12>(&underlying_stream, move(options));
     tls_socket->set_sni(host);
-    Core::EventLoop loop;
     tls_socket->on_connected = [&] {
-        loop.quit(0);
+        promise->resolve({});
     };
     tls_socket->on_tls_error = [&](auto alert) {
-        loop.quit(256 - to_underlying(alert));
+        tls_socket->try_disambiguate_error();
+        promise->reject(AK::Error::from_string_view(enum_to_string(alert)));
     };
-    auto result = loop.exec();
-    if (result == 0)
-        return tls_socket;
-
-    tls_socket->try_disambiguate_error();
-    // FIXME: Should return richer information here.
-    return AK::Error::from_string_literal(alert_name(static_cast<AlertDescription>(256 - result)));
+    TRY(promise->await());
+    tls_socket->m_context.should_expect_successful_read = true;
+    return tls_socket;
 }
 
 void TLSv12::setup_connection()
@@ -134,7 +108,7 @@ void TLSv12::setup_connection()
                 if (timeout_diff < m_max_wait_time_for_handshake_in_seconds + 1) {
                     // The server did not respond fast enough,
                     // time the connection out.
-                    alert(AlertLevel::Critical, AlertDescription::UserCanceled);
+                    alert(AlertLevel::FATAL, AlertDescription::USER_CANCELED);
                     m_context.tls_buffer.clear();
                     m_context.error_code = Error::TimedOut;
                     m_context.critical_error = (u8)Error::TimedOut;
@@ -186,10 +160,10 @@ ErrorOr<void> TLSv12::read_from_socket()
 
     u8 buffer[16 * KiB];
     Bytes bytes { buffer, array_size(buffer) };
-    size_t nread = 0;
+    Bytes read_bytes {};
     auto& stream = underlying_stream();
     do {
-        auto result = stream.read(bytes);
+        auto result = stream.read_some(bytes);
         if (result.is_error()) {
             if (result.error().is_errno() && result.error().code() != EINTR) {
                 if (result.error().code() != EAGAIN)
@@ -198,9 +172,19 @@ ErrorOr<void> TLSv12::read_from_socket()
             }
             continue;
         }
-        nread = result.release_value();
-        consume(bytes.slice(0, nread));
-    } while (nread > 0 && !m_context.critical_error);
+        read_bytes = result.release_value();
+        consume(read_bytes);
+    } while (!read_bytes.is_empty() && !m_context.critical_error);
+
+    if (m_context.should_expect_successful_read && read_bytes.is_empty()) {
+        // read_some() returned an empty span, this is either an EOF (from improper closure)
+        // or some sort of weird even that is showing itself as an EOF.
+        // To guard against servers closing the connection weirdly or just improperly, make sure
+        // to check the connection state here and send the appropriate notifications.
+        stream.close();
+
+        check_connection_state(true);
+    }
 
     return {};
 }
@@ -232,6 +216,11 @@ bool TLSv12::check_connection_state(bool read)
         m_context.connection_finished = true;
         m_context.connection_status = ConnectionStatus::Disconnected;
         close();
+        m_context.has_invoked_finish_or_error_callback = true;
+        if (on_ready_to_read)
+            on_ready_to_read(); // Notify the client about the weird event.
+        if (on_tls_finished)
+            on_tls_finished();
         return false;
     }
 
@@ -290,11 +279,14 @@ ErrorOr<bool> TLSv12::flush()
     Optional<AK::Error> error;
     size_t written;
     do {
-        auto result = stream.write(out_bytes);
-        if (result.is_error() && result.error().code() != EINTR && result.error().code() != EAGAIN) {
-            error = result.release_error();
-            dbgln("TLS Socket write error: {}", *error);
-            break;
+        auto result = stream.write_some(out_bytes);
+        if (result.is_error()) {
+            if (result.error().code() != EINTR && result.error().code() != EAGAIN) {
+                error = result.release_error();
+                dbgln("TLS Socket write error: {}", *error);
+                break;
+            }
+            continue;
         }
         written = result.value();
         out_bytes = out_bytes.slice(written);
@@ -316,7 +308,8 @@ ErrorOr<bool> TLSv12::flush()
 
 void TLSv12::close()
 {
-    alert(AlertLevel::Critical, AlertDescription::CloseNotify);
+    if (underlying_stream().is_open())
+        alert(AlertLevel::FATAL, AlertDescription::CLOSE_NOTIFY);
     // bye bye.
     m_context.connection_status = ConnectionStatus::Disconnected;
 }

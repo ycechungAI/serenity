@@ -42,22 +42,14 @@ DeviceManagement& DeviceManagement::the()
     return *s_the;
 }
 
-Device* DeviceManagement::get_device(MajorNumber major, MinorNumber minor)
+RefPtr<Device> DeviceManagement::get_device(MajorNumber major, MinorNumber minor)
 {
-    return m_devices.with([&](auto& map) -> Device* {
+    return m_devices.with([&](auto& map) -> RefPtr<Device> {
         auto it = map.find(encoded_device(major.value(), minor.value()));
         if (it == map.end())
             return nullptr;
-        return it->value;
+        return *it->value;
     });
-}
-
-Optional<DeviceEvent> DeviceManagement::dequeue_top_device_event(Badge<DeviceControlDevice>)
-{
-    SpinlockLocker locker(m_event_queue_lock);
-    if (m_event_queue.is_empty())
-        return {};
-    return m_event_queue.dequeue();
 }
 
 void DeviceManagement::before_device_removal(Badge<Device>, Device& device)
@@ -68,13 +60,18 @@ void DeviceManagement::before_device_removal(Badge<Device>, Device& device)
         map.remove(encoded_device(device.major(), device.minor()));
     });
 
-    {
+    m_event_queue.with([&](auto& queue) {
         DeviceEvent event { DeviceEvent::State::Removed, device.is_block_device(), device.major().value(), device.minor().value() };
-        SpinlockLocker locker(m_event_queue_lock);
-        m_event_queue.enqueue(event);
-    }
+        queue.enqueue(event);
+    });
+
     if (m_device_control_device)
         m_device_control_device->evaluate_block_conditions();
+}
+
+SpinlockProtected<CircularQueue<DeviceEvent, 100>, LockRank::None>& DeviceManagement::event_queue(Badge<DeviceControlDevice>)
+{
+    return m_event_queue;
 }
 
 void DeviceManagement::after_inserting_device(Badge<Device>, Device& device)
@@ -92,11 +89,11 @@ void DeviceManagement::after_inserting_device(Badge<Device>, Device& device)
         }
     });
 
-    {
+    m_event_queue.with([&](auto& queue) {
         DeviceEvent event { DeviceEvent::State::Inserted, device.is_block_device(), device.major().value(), device.minor().value() };
-        SpinlockLocker locker(m_event_queue_lock);
-        m_event_queue.enqueue(event);
-    }
+        queue.enqueue(event);
+    });
+
     if (m_device_control_device)
         m_device_control_device->evaluate_block_conditions();
 }

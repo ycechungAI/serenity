@@ -1,10 +1,23 @@
 #import <HTML/HTMLElement.idl>
 
+// https://html.spec.whatwg.org/multipage/media.html#htmltrackelement
+[Exposed=Window]
 interface HTMLTrackElement : HTMLElement {
 
-    [Reflect] attribute DOMString src;
-    [Reflect] attribute DOMString srclang;
-    [Reflect] attribute DOMString label;
-    [Reflect] attribute boolean default;
+    [HTMLConstructor] constructor();
+
+    // FIXME: [CEReactions] attribute DOMString kind;
+    [CEReactions, Reflect] attribute DOMString src;
+    [CEReactions, Reflect] attribute DOMString srclang;
+    [CEReactions, Reflect] attribute DOMString label;
+    [CEReactions, Reflect] attribute boolean default;
+
+    // FIXME: [const unsigned short NONE = 0;
+    // FIXME: [const unsigned short LOADING = 1;
+    // FIXME: [const unsigned short LOADED = 2;
+    // FIXME: [const unsigned short ERROR = 3;
+    // FIXME: [readonly attribute unsigned short readyState;
+
+    // FIXME: [readonly attribute TextTrack track;
 
 };

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <LibWeb/ARIA/Roles.h>
 #include <LibWeb/HTML/FormAssociatedElement.h>
 #include <LibWeb/HTML/HTMLElement.h>
 
@@ -15,19 +16,24 @@ namespace Web::HTML {
 class HTMLOutputElement final
     : public HTMLElement
     , public FormAssociatedElement {
+    WEB_PLATFORM_OBJECT(HTMLOutputElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLOutputElement);
     FORM_ASSOCIATED_ELEMENT(HTMLElement, HTMLOutputElement)
 
 public:
-    using WrapperType = Bindings::HTMLOutputElementWrapper;
-
-    HTMLOutputElement(DOM::Document&, DOM::QualifiedName);
     virtual ~HTMLOutputElement() override;
 
-    const String& type() const
+    String const& type() const
     {
-        static String output = "output";
+        static String const output = "output"_string;
         return output;
     }
+
+    String default_value() const;
+    void set_default_value(String const&);
+
+    String value() const override;
+    void set_value(String const&);
 
     // ^FormAssociatedElement
     // https://html.spec.whatwg.org/multipage/forms.html#category-listed
@@ -42,6 +48,18 @@ public:
     // ^HTMLElement
     // https://html.spec.whatwg.org/multipage/forms.html#category-label
     virtual bool is_labelable() const override { return true; }
+
+    virtual void reset_algorithm() override;
+
+    // https://www.w3.org/TR/html-aria/#el-output
+    virtual Optional<ARIA::Role> default_role() const override { return ARIA::Role::status; }
+
+private:
+    HTMLOutputElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
+
+    Optional<String> m_default_value_override {};
 };
 
 }

@@ -14,7 +14,7 @@ namespace AK {
 
 char s_single_dot = '.';
 
-LexicalPath::LexicalPath(String path)
+LexicalPath::LexicalPath(ByteString path)
     : m_string(canonicalized_path(move(path)))
 {
     if (m_string.is_empty()) {
@@ -58,9 +58,9 @@ LexicalPath::LexicalPath(String path)
     }
 }
 
-Vector<String> LexicalPath::parts() const
+Vector<ByteString> LexicalPath::parts() const
 {
-    Vector<String> vector;
+    Vector<ByteString> vector;
     vector.ensure_capacity(m_parts.size());
     for (auto& part : m_parts)
         vector.unchecked_append(part);
@@ -72,11 +72,24 @@ bool LexicalPath::has_extension(StringView extension) const
     return m_string.ends_with(extension, CaseSensitivity::CaseInsensitive);
 }
 
-String LexicalPath::canonicalized_path(String path)
+bool LexicalPath::is_child_of(LexicalPath const& possible_parent) const
 {
-    if (path.is_null())
-        return {};
+    // Any relative path is a child of an absolute path.
+    if (!this->is_absolute() && possible_parent.is_absolute())
+        return true;
+    // An absolute path can't meaningfully be a child of a relative path.
+    if (this->is_absolute() && !possible_parent.is_absolute())
+        return false;
 
+    // Two relative paths and two absolute paths can be meaningfully compared.
+    if (possible_parent.parts_view().size() > this->parts_view().size())
+        return false;
+    auto common_parts_with_parent = this->parts_view().span().trim(possible_parent.parts_view().size());
+    return common_parts_with_parent == possible_parent.parts_view().span();
+}
+
+ByteString LexicalPath::canonicalized_path(ByteString path)
+{
     // NOTE: We never allow an empty m_string, if it's empty, we just set it to '.'.
     if (path.is_empty())
         return ".";
@@ -88,7 +101,7 @@ String LexicalPath::canonicalized_path(String path)
     auto is_absolute = path[0] == '/';
     auto parts = path.split_view('/');
     size_t approximate_canonical_length = 0;
-    Vector<String> canonical_parts;
+    Vector<ByteString> canonical_parts;
 
     for (auto& part : parts) {
         if (part == ".")
@@ -118,10 +131,10 @@ String LexicalPath::canonicalized_path(String path)
     if (is_absolute)
         builder.append('/');
     builder.join('/', canonical_parts);
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
-String LexicalPath::absolute_path(String dir_path, String target)
+ByteString LexicalPath::absolute_path(ByteString dir_path, ByteString target)
 {
     if (LexicalPath(target).is_absolute()) {
         return LexicalPath::canonicalized_path(target);
@@ -129,11 +142,11 @@ String LexicalPath::absolute_path(String dir_path, String target)
     return LexicalPath::canonicalized_path(join(dir_path, target).string());
 }
 
-String LexicalPath::relative_path(StringView a_path, StringView a_prefix)
+ByteString LexicalPath::relative_path(StringView a_path, StringView a_prefix)
 {
     if (!a_path.starts_with('/') || !a_prefix.starts_with('/')) {
-        // FIXME: This should probably VERIFY or return an Optional<String>.
-        return {};
+        // FIXME: This should probably VERIFY or return an Optional<ByteString>.
+        return ""sv;
     }
 
     if (a_path == a_prefix)
@@ -155,8 +168,25 @@ String LexicalPath::relative_path(StringView a_path, StringView a_prefix)
         return path.substring_view(prefix.length() + 1);
     }
 
-    // FIXME: It's still possible to generate a relative path in this case, it just needs some "..".
-    return path;
+    auto path_parts = path.split_view('/');
+    auto prefix_parts = prefix.split_view('/');
+    size_t index_of_first_part_that_differs = 0;
+    for (; index_of_first_part_that_differs < path_parts.size() && index_of_first_part_that_differs < prefix_parts.size(); index_of_first_part_that_differs++) {
+        if (path_parts[index_of_first_part_that_differs] != prefix_parts[index_of_first_part_that_differs])
+            break;
+    }
+
+    StringBuilder builder;
+    for (size_t part_index = index_of_first_part_that_differs; part_index < prefix_parts.size(); part_index++) {
+        builder.append("../"sv);
+    }
+    for (size_t part_index = index_of_first_part_that_differs; part_index < path_parts.size(); part_index++) {
+        builder.append(path_parts[part_index]);
+        if (part_index != path_parts.size() - 1) // We don't need a slash after the file name or the name of the last directory
+            builder.append('/');
+    }
+
+    return builder.to_byte_string();
 }
 
 LexicalPath LexicalPath::append(StringView value) const
@@ -171,7 +201,7 @@ LexicalPath LexicalPath::prepend(StringView value) const
 
 LexicalPath LexicalPath::parent() const
 {
-    return append("..");
+    return append(".."sv);
 }
 
 }

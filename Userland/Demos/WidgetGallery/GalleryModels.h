@@ -27,13 +27,13 @@ public:
 
     virtual int row_count(const GUI::ModelIndex&) const override { return m_cursors.size(); }
     virtual int column_count(const GUI::ModelIndex&) const override { return Column::__Count; }
-    virtual String column_name(int column_index) const override
+    virtual ErrorOr<String> column_name(int column_index) const override
     {
         switch (column_index) {
         case Column::Bitmap:
-            return {};
+            return String {};
         case Column::Name:
-            return "Name";
+            return "Name"_string;
         }
         VERIFY_NOT_REACHED();
     }
@@ -60,20 +60,20 @@ public:
     {
         m_cursors.clear();
 
-        Core::DirIterator iterator(String::formatted("/res/cursor-themes/{}", GUI::ConnectionToWindowServer::the().get_cursor_theme()), Core::DirIterator::Flags::SkipDots);
+        Core::DirIterator iterator(ByteString::formatted("/res/cursor-themes/{}", GUI::ConnectionToWindowServer::the().get_cursor_theme()), Core::DirIterator::Flags::SkipDots);
 
         while (iterator.has_next()) {
             auto path = iterator.next_full_path();
-            if (path.ends_with(".ini"))
+            if (path.ends_with(".ini"sv))
                 continue;
-            if (path.contains("2x"))
+            if (path.contains("2x"sv))
                 continue;
             Cursor cursor;
             cursor.path = move(path);
             cursor.name = LexicalPath::basename(cursor.path);
 
             // FIXME: Animated cursor bitmaps
-            auto cursor_bitmap = Gfx::Bitmap::try_load_from_file(cursor.path).release_value_but_fixme_should_propagate_errors();
+            auto cursor_bitmap = Gfx::Bitmap::load_from_file(cursor.path).release_value_but_fixme_should_propagate_errors();
             auto cursor_bitmap_rect = cursor_bitmap->rect();
 
             cursor.params = Gfx::CursorParams::parse_from_filename(cursor.name, cursor_bitmap_rect.center()).constrained(*cursor_bitmap);
@@ -90,8 +90,8 @@ private:
 
     struct Cursor {
         RefPtr<Gfx::Bitmap> bitmap;
-        String path;
-        String name;
+        ByteString path;
+        ByteString name;
         Gfx::CursorParams params;
     };
 
@@ -112,15 +112,15 @@ public:
 
     virtual int row_count(const GUI::ModelIndex&) const override { return m_icon_sets.size(); }
     virtual int column_count(const GUI::ModelIndex&) const override { return Column::__Count; }
-    virtual String column_name(int column_index) const override
+    virtual ErrorOr<String> column_name(int column_index) const override
     {
         switch (column_index) {
         case Column::BigIcon:
-            return {};
+            return String {};
         case Column::LittleIcon:
-            return {};
+            return String {};
         case Column::Name:
-            return "Name";
+            return "Name"_string;
         }
         VERIFY_NOT_REACHED();
     }
@@ -155,10 +155,10 @@ public:
 
         while (big_iterator.has_next()) {
             auto path = big_iterator.next_full_path();
-            if (!path.contains("filetype-") && !path.contains("app-"))
+            if (!path.contains("filetype-"sv) && !path.contains("app-"sv))
                 continue;
             IconSet icon_set;
-            icon_set.big_icon = Gfx::Bitmap::try_load_from_file(path).release_value_but_fixme_should_propagate_errors();
+            icon_set.big_icon = Gfx::Bitmap::load_from_file(path).release_value_but_fixme_should_propagate_errors();
             icon_set.name = LexicalPath::basename(path);
             m_icon_sets.append(move(icon_set));
         }
@@ -169,10 +169,10 @@ public:
 
         while (little_iterator.has_next()) {
             auto path = little_iterator.next_full_path();
-            if (!path.contains("filetype-") && !path.contains("app-"))
+            if (!path.contains("filetype-"sv) && !path.contains("app-"sv))
                 continue;
             IconSet icon_set;
-            icon_set.little_icon = Gfx::Bitmap::try_load_from_file(path).release_value_but_fixme_should_propagate_errors();
+            icon_set.little_icon = Gfx::Bitmap::load_from_file(path).release_value_but_fixme_should_propagate_errors();
             icon_set.name = LexicalPath::basename(path);
             for (size_t i = 0; i < big_icons_found; i++) {
                 if (icon_set.name == m_icon_sets[i].name) {
@@ -194,7 +194,7 @@ private:
     struct IconSet {
         RefPtr<Gfx::Bitmap> big_icon;
         RefPtr<Gfx::Bitmap> little_icon;
-        String name;
+        ByteString name;
     };
 
     Vector<IconSet> m_icon_sets;

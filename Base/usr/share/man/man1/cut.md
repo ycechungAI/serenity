@@ -23,7 +23,7 @@ With no FILE, or when FILE is -, read standard input.
 * `-b` `--bytes=list`: Select only these bytes
 * `-f` `--fields=list`: select only these fields; also print any line that contains no delimiter character
 * `-d` `--delimiter=delim`: use `delim` instead of `tab` for field delimiter
-
+* `-s`, `only-delimited`: suppress lines which don't contain any field delimiter characters
 
 ## Examples
 
@@ -47,3 +47,7 @@ $ echo "serenity is cool" | cut -b 5
 n
 
 ```
+
+## See Also
+* [`head`(1)](help://man/1/head)
+* [`cat`(1)](help://man/1/cat)

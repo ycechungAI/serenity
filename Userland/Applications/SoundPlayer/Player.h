@@ -11,6 +11,8 @@
 #include "Playlist.h"
 #include "PlaylistWidget.h"
 #include <AK/RefPtr.h>
+#include <LibAudio/GenericTypes.h>
+#include <LibAudio/Sample.h>
 
 class Player {
 public:
@@ -30,14 +32,15 @@ public:
         Shuffling,
     };
 
-    explicit Player(Audio::ConnectionFromClient& audio_client_connection);
+    explicit Player(Audio::ConnectionToServer& audio_client_connection);
     virtual ~Player() = default;
 
-    void play_file_path(String const& path);
-    bool is_playlist(String const& path);
+    void play_file_path(ByteString const& path);
+    bool is_playlist(ByteString const& path);
 
     Playlist& playlist() { return m_playlist; }
-    String const& loaded_filename() const { return m_loaded_filename; }
+    PlaybackManager const& playback_manager() const { return m_playback_manager; }
+    ByteString const& loaded_filename() const { return m_loaded_filename; }
 
     PlayState play_state() const { return m_play_state; }
     void set_play_state(PlayState);
@@ -72,7 +75,9 @@ public:
     virtual void volume_changed(double) = 0;
     virtual void mute_changed(bool) = 0;
     virtual void total_samples_changed(int) = 0;
-    virtual void sound_buffer_played(RefPtr<Audio::Buffer>, [[maybe_unused]] int sample_rate, [[maybe_unused]] int samples_played) = 0;
+    virtual void sound_buffer_played(FixedArray<Audio::Sample> const&, [[maybe_unused]] int sample_rate, [[maybe_unused]] int samples_played) = 0;
+
+    Vector<Audio::PictureData> const& pictures() const;
 
 protected:
     void done_initializing()
@@ -90,10 +95,10 @@ private:
     LoopMode m_loop_mode { LoopMode::None };
     ShuffleMode m_shuffle_mode { ShuffleMode::None };
 
-    Audio::ConnectionFromClient& m_audio_client_connection;
+    Audio::ConnectionToServer& m_audio_client_connection;
     PlaybackManager m_playback_manager;
 
-    String m_loaded_filename;
+    ByteString m_loaded_filename;
     double m_volume { 0 };
     bool m_muted { false };
 };

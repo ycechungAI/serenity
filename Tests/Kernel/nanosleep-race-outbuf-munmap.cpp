@@ -19,7 +19,7 @@ static void signal_printer(int)
 typedef struct yank_shared_t {
     timespec* remaining_sleep;
     // TODO: Be nice and use thread ID
-    //pthread_t sleeper_thread;
+    // pthread_t sleeper_thread;
 } yank_shared_t;
 
 static void* yanker_fn(void* shared_)
@@ -116,7 +116,7 @@ int main()
     signal(SIGUSR1, signal_printer);
 
     // T1: Go to sleep.
-    const timespec requested_sleep = { 3, 0 };
+    timespec const requested_sleep = { 3, 0 };
     rc = clock_nanosleep(CLOCK_MONOTONIC, 0, &requested_sleep, shared.remaining_sleep);
     // Now we are beyond T4.
 

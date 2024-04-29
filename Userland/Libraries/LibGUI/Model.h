@@ -51,6 +51,7 @@ public:
     enum UpdateFlag {
         DontInvalidateIndices = 0,
         InvalidateAllIndices = 1 << 0,
+        DontResizeColumns = 1 << 1,
     };
 
     enum MatchesFlag {
@@ -61,13 +62,18 @@ public:
         MatchFull = 1 << 3,
     };
 
+    struct MatchResult {
+        TriState matched { TriState::Unknown };
+        int score { 0 };
+    };
+
     virtual ~Model();
 
     virtual int row_count(ModelIndex const& = ModelIndex()) const = 0;
     virtual int column_count(ModelIndex const& = ModelIndex()) const = 0;
-    virtual String column_name(int) const { return {}; }
+    virtual ErrorOr<String> column_name(int) const { return String {}; }
     virtual Variant data(ModelIndex const&, ModelRole = ModelRole::Display) const = 0;
-    virtual TriState data_matches(ModelIndex const&, Variant const&) const { return TriState::Unknown; }
+    virtual MatchResult data_matches(ModelIndex const&, Variant const&) const { return {}; }
     virtual void invalidate();
     virtual ModelIndex parent_index(ModelIndex const&) const { return {}; }
     virtual ModelIndex index(int row, int column = 0, ModelIndex const& parent = ModelIndex()) const;
@@ -98,11 +104,18 @@ public:
 
     WeakPtr<PersistentHandle> register_persistent_index(Badge<PersistentModelIndex>, ModelIndex const&);
 
+    // NOTE: This is a public version of create_index() which is normally protected,
+    //       but this can be used when creating a model translator like in Ladybird.
+    ModelIndex unsafe_create_index(int row, int column, void const* data = nullptr) const
+    {
+        return create_index(row, column, data);
+    }
+
 protected:
     Model();
 
-    void for_each_view(Function<void(AbstractView&)>);
-    void for_each_client(Function<void(ModelClient&)>);
+    void for_each_view(NOESCAPE Function<void(AbstractView&)>);
+    void for_each_client(NOESCAPE Function<void(ModelClient&)>);
     void did_update(unsigned flags = UpdateFlag::InvalidateAllIndices);
 
     static bool string_matches(StringView str, StringView needle, unsigned flags)

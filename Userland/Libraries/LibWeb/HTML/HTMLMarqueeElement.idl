@@ -1,11 +1,24 @@
 #import <HTML/HTMLElement.idl>
 
+// https://html.spec.whatwg.org/multipage/obsolete.html#htmlmarqueeelement
+[Exposed=Window]
 interface HTMLMarqueeElement : HTMLElement {
 
-    [Reflect] attribute DOMString behavior;
-    [Reflect=bgcolor] attribute DOMString bgColor;
-    [Reflect] attribute DOMString direction;
-    [Reflect] attribute DOMString height;
-    [Reflect] attribute DOMString width;
+    [HTMLConstructor] constructor();
+
+    [CEReactions, Reflect] attribute DOMString behavior;
+    [CEReactions, Reflect=bgcolor] attribute DOMString bgColor;
+    [CEReactions, Reflect] attribute DOMString direction;
+    [CEReactions, Reflect] attribute DOMString height;
+    // FIXME: [CEReactions] attribute unsigned long hspace;
+    // FIXME: [CEReactions] attribute long loop;
+    // FIXME: [CEReactions] attribute unsigned long scrollAmount;
+    // FIXME: [CEReactions] attribute unsigned long scrollDelay;
+    // FIXME: [CEReactions] attribute boolean trueSpeed;
+    // FIXME: [CEReactions] attribute unsigned long vspace;
+    [CEReactions, Reflect] attribute DOMString width;
+
+    // FIXME: undefined start();
+    // FIXME: undefined stop();
 
 };

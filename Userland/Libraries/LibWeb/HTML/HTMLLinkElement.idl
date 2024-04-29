@@ -1,19 +1,33 @@
+#import <CSS/LinkStyle.idl>
 #import <HTML/HTMLElement.idl>
 
+// https://html.spec.whatwg.org/multipage/semantics.html#htmllinkelement
+[Exposed=Window]
 interface HTMLLinkElement : HTMLElement {
 
-    [Reflect] attribute DOMString href;
-    [Reflect] attribute DOMString hreflang;
-    [Reflect] attribute DOMString integrity;
-    [Reflect] attribute DOMString media;
-    [Reflect] attribute DOMString rel;
-    [Reflect] attribute DOMString type;
-    [Reflect=imagesrcset] attribute DOMString imageSrcset;
-    [Reflect=imagesizes] attribute DOMString imageSizes;
-    [Reflect] attribute boolean disabled;
+    [HTMLConstructor] constructor();
 
-    [Reflect] attribute DOMString charset;
-    [Reflect] attribute DOMString rev;
-    [Reflect] attribute DOMString target;
+    [CEReactions, Reflect] attribute DOMString href;
+    // FIXME: [CEReactions] attribute DOMString? crossOrigin;
+    [CEReactions, Reflect] attribute DOMString rel;
+    // FIXME: [CEReactions] attribute DOMString as;
+    // FIXME: [SameObject, PutForwards=value] readonly attribute DOMTokenList relList;
+    [CEReactions, Reflect] attribute DOMString media;
+    [CEReactions, Reflect] attribute DOMString integrity;
+    [CEReactions, Reflect] attribute DOMString hreflang;
+    [CEReactions, Reflect] attribute DOMString type;
+    // FIXME: [SameObject, PutForwards=value] readonly attribute DOMTokenList sizes;
+    [CEReactions, Reflect=imagesrcset] attribute DOMString imageSrcset;
+    [CEReactions, Reflect=imagesizes] attribute DOMString imageSizes;
+    // FIXME: [CEReactions] attribute DOMString referrerPolicy;
+    // FIXME: [SameObject, PutForwards=value] readonly attribute DOMTokenList blocking;
+    [CEReactions, Reflect] attribute boolean disabled;
+    // FIXME: [CEReactions] attribute DOMString fetchPriority;
+
+    // Obsolete
+    [CEReactions, Reflect] attribute DOMString charset;
+    [CEReactions, Reflect] attribute DOMString rev;
+    [CEReactions, Reflect] attribute DOMString target;
 
 };
+// FIXME: HTMLLinkElement includes LinkStyle;

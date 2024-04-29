@@ -7,10 +7,10 @@
 #pragma once
 
 #include "DHCPv4.h"
+#include <AK/ByteString.h>
 #include <AK/Error.h>
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
-#include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibCore/UDPServer.h>
 #include <net/if.h>
@@ -19,7 +19,7 @@
 #include <sys/socket.h>
 
 struct InterfaceDescriptor {
-    String ifname;
+    ByteString ifname;
     MACAddress mac_address;
     IPv4Address current_ip_address;
 };
@@ -36,16 +36,14 @@ struct DHCPv4Transaction {
     u32 offered_lease_time { 0 };
 };
 
-class DHCPv4Client final : public Core::Object {
+class DHCPv4Client final : public Core::EventReceiver {
     C_OBJECT(DHCPv4Client)
 
 public:
-    virtual ~DHCPv4Client() override = default;
+    void dhcp_discover(InterfaceDescriptor const& ifname);
+    void dhcp_request(DHCPv4Transaction& transaction, DHCPv4Packet const& packet);
 
-    void dhcp_discover(const InterfaceDescriptor& ifname);
-    void dhcp_request(DHCPv4Transaction& transaction, const DHCPv4Packet& packet);
-
-    void process_incoming(const DHCPv4Packet& packet);
+    void process_incoming(DHCPv4Packet const& packet);
 
     bool id_is_registered(u32 id) { return m_ongoing_transactions.contains(id); }
 
@@ -56,16 +54,17 @@ public:
     static ErrorOr<Interfaces> get_discoverable_interfaces();
 
 private:
-    explicit DHCPv4Client();
+    explicit DHCPv4Client(Vector<ByteString> interfaces_with_dhcp_enabled);
 
     void try_discover_ifs();
 
+    Vector<ByteString> m_interfaces_with_dhcp_enabled;
     HashMap<u32, OwnPtr<DHCPv4Transaction>> m_ongoing_transactions;
     RefPtr<Core::UDPServer> m_server;
     RefPtr<Core::Timer> m_check_timer;
     int m_max_timer_backoff_interval { 600000 }; // 10 minutes
 
-    void handle_offer(const DHCPv4Packet&, const ParsedDHCPv4Options&);
-    void handle_ack(const DHCPv4Packet&, const ParsedDHCPv4Options&);
-    void handle_nak(const DHCPv4Packet&, const ParsedDHCPv4Options&);
+    void handle_offer(DHCPv4Packet const&, ParsedDHCPv4Options const&);
+    void handle_ack(DHCPv4Packet const&, ParsedDHCPv4Options const&);
+    void handle_nak(DHCPv4Packet const&, ParsedDHCPv4Options const&);
 };

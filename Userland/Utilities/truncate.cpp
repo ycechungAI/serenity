@@ -4,13 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/CharacterTypes.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 enum TruncateOperation {
     OP_Set,
@@ -22,9 +19,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio rpath wpath cpath"));
 
-    const char* resize = nullptr;
-    const char* reference = nullptr;
-    const char* file = nullptr;
+    StringView resize;
+    StringView reference;
+    StringView file;
 
     Core::ArgsParser args_parser;
     args_parser.add_option(resize, "Resize the target file to (or by) this size. Prefix with + or - to expand or shrink the file, or a bare number to set the size exactly", "size", 's', "size");
@@ -32,42 +29,62 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     args_parser.add_positional_argument(file, "File path", "file");
     args_parser.parse(arguments);
 
-    if (!resize && !reference) {
-        args_parser.print_usage(stderr, arguments.argv[0]);
+    if (resize.is_empty() && reference.is_empty()) {
+        args_parser.print_usage(stderr, arguments.strings[0]);
         return 1;
     }
 
-    if (resize && reference) {
-        args_parser.print_usage(stderr, arguments.argv[0]);
+    if (!resize.is_empty() && !reference.is_empty()) {
+        args_parser.print_usage(stderr, arguments.strings[0]);
         return 1;
     }
 
     auto op = OP_Set;
     off_t size = 0;
 
-    if (resize) {
-        String str = resize;
-
-        switch (str[0]) {
+    if (!resize.is_empty()) {
+        switch (resize[0]) {
         case '+':
             op = OP_Grow;
-            str = str.substring(1, str.length() - 1);
+            resize = resize.substring_view(1);
             break;
         case '-':
             op = OP_Shrink;
-            str = str.substring(1, str.length() - 1);
+            resize = resize.substring_view(1);
             break;
         }
 
-        auto size_opt = str.to_int<off_t>();
-        if (!size_opt.has_value()) {
-            args_parser.print_usage(stderr, arguments.argv[0]);
+        auto suffix = resize[resize.length() - 1];
+        i64 multiplier = 1;
+        if (!AK::is_ascii_digit(suffix)) {
+            switch (to_ascii_lowercase(suffix)) {
+            case 'k':
+                multiplier = KiB;
+                resize = resize.substring_view(0, resize.length() - 1);
+                break;
+            case 'm':
+                multiplier = MiB;
+                resize = resize.substring_view(0, resize.length() - 1);
+                break;
+            case 'g':
+                multiplier = GiB;
+                resize = resize.substring_view(0, resize.length() - 1);
+                break;
+            default:
+                args_parser.print_usage(stderr, arguments.strings[0]);
+                return 1;
+            }
+        }
+
+        auto size_opt = resize.to_number<off_t>();
+        if (!size_opt.has_value() || Checked<off_t>::multiplication_would_overflow(size_opt.value(), multiplier)) {
+            args_parser.print_usage(stderr, arguments.strings[0]);
             return 1;
         }
-        size = size_opt.value();
+        size = size_opt.value() * multiplier;
     }
 
-    if (reference) {
+    if (!reference.is_empty()) {
         auto stat = TRY(Core::System::stat(reference));
         size = stat.st_size;
     }
@@ -82,7 +99,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         size = stat.st_size + size;
         break;
     case OP_Shrink:
-        size = stat.st_size - size;
+        size = max(stat.st_size - size, 0);
         break;
     }
 

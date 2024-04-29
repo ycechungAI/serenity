@@ -1,13 +1,16 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=mbedtls
-version=2.16.2
-files="https://tls.mbed.org/download/mbedtls-${version}-apache.tgz mbedtls-${version}-apache.tgz a6834fcd7b7e64b83dfaaa6ee695198cb5019a929b2806cb0162e049f98206a4"
-makeopts=("CFLAGS=-DPLATFORM_UTIL_USE_GMTIME")
-auth_type=sha256
+port='mbedtls'
+version='3.4.1'
+files=(
+    "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${version}.tar.gz#a420fcf7103e54e775c383e3751729b8fb2dcd087f6165befd13f28315f754f5"
+)
+makeopts+=(
+    'SHARED=1'
+)
 
 install() {
-    run make DESTDIR="${SERENITY_INSTALL_ROOT}/usr/local" "${installopts[@]}" install
-    ${CC} -shared -o ${SERENITY_INSTALL_ROOT}/usr/local/lib/libmbedcrypto.so -Wl,-soname,libmbedcrypto.so -Wl,--whole-archive ${SERENITY_INSTALL_ROOT}/usr/local/lib/libmbedcrypto.a -Wl,--no-whole-archive
-    ${CC} -shared -o ${SERENITY_INSTALL_ROOT}/usr/local/lib/libmbedx509.so -Wl,-soname,libmbedx509.so -Wl,--whole-archive ${SERENITY_INSTALL_ROOT}/usr/local/lib/libmbedx509.a -Wl,--no-whole-archive -lmbedcrypto
-    ${CC} -shared -o ${SERENITY_INSTALL_ROOT}/usr/local/lib/libmbedtls.so -Wl,-soname,libmbedtls.so -Wl,--whole-archive ${SERENITY_INSTALL_ROOT}/usr/local/lib/libmbedtls.a -Wl,--no-whole-archive -lmbedcrypto -lmbedx509
+    run make \
+        DESTDIR="${SERENITY_INSTALL_ROOT}/usr/local" \
+        "${installopts[@]}" \
+        install
 }

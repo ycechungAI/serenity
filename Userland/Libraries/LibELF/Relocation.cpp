@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibC/elf.h>
+#include <LibELF/Arch/GenericDynamicRelocationType.h>
+#include <LibELF/ELFABI.h>
 #include <LibELF/Relocation.h>
 
 namespace ELF {
@@ -12,8 +13,8 @@ namespace ELF {
 bool perform_relative_relocations(FlatPtr base_address)
 {
 
-    ElfW(Ehdr)* header = (ElfW(Ehdr)*)(base_address);
-    ElfW(Phdr)* pheader = (ElfW(Phdr)*)(base_address + header->e_phoff);
+    Elf_Ehdr* header = (Elf_Ehdr*)(base_address);
+    Elf_Phdr* pheader = (Elf_Phdr*)(base_address + header->e_phoff);
     FlatPtr dynamic_section_addr = 0;
     for (size_t i = 0; i < (size_t)header->e_phnum; ++i, ++pheader) {
         if (pheader->p_type != PT_DYNAMIC)
@@ -30,7 +31,7 @@ bool perform_relative_relocations(FlatPtr base_address)
     FlatPtr relr_relocation_section_addr = 0;
     size_t relr_relocation_table_size = 0;
     bool use_addend = false;
-    auto* dyns = reinterpret_cast<const ElfW(Dyn)*>(dynamic_section_addr);
+    auto* dyns = reinterpret_cast<Elf_Dyn const*>(dynamic_section_addr);
     for (unsigned i = 0;; ++i) {
         auto& dyn = dyns[i];
         if (dyn.d_tag == DT_NULL)
@@ -58,12 +59,8 @@ bool perform_relative_relocations(FlatPtr base_address)
 
     for (unsigned i = 0; i < relocation_count; ++i) {
         size_t offset_in_section = i * relocation_entry_size;
-        auto* relocation = (ElfW(Rela)*)(relocation_section_addr + offset_in_section);
-#if ARCH(I386)
-        VERIFY(ELF32_R_TYPE(relocation->r_info) == R_386_RELATIVE);
-#else
-        VERIFY(ELF64_R_TYPE(relocation->r_info) == R_X86_64_RELATIVE);
-#endif
+        auto* relocation = (Elf_Rela*)(relocation_section_addr + offset_in_section);
+        VERIFY(static_cast<GenericDynamicRelocationType>(ELF64_R_TYPE(relocation->r_info)) == GenericDynamicRelocationType::RELATIVE);
         auto* patch_address = (FlatPtr*)(base_address + relocation->r_offset);
         FlatPtr relocated_address;
         if (use_addend) {
@@ -82,7 +79,7 @@ bool perform_relative_relocations(FlatPtr base_address)
         __builtin_memcpy(patch_ptr, &relocated_address, sizeof(FlatPtr));
     };
 
-    auto* entries = reinterpret_cast<ElfW(Relr)*>(relr_relocation_section_addr);
+    auto* entries = reinterpret_cast<Elf_Relr*>(relr_relocation_section_addr);
     FlatPtr* patch_ptr = nullptr;
 
     for (unsigned i = 0; i < relr_relocation_table_size / sizeof(FlatPtr); ++i) {

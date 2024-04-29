@@ -8,7 +8,6 @@
  */
 
 #include <LibCore/ArgsParser.h>
-#include <LibCore/File.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
 #include <grp.h>
@@ -20,15 +19,16 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::pledge("stdio wpath rpath cpath fattr proc exec"));
     TRY(Core::System::unveil("/etc/", "rwc"));
     TRY(Core::System::unveil("/bin/rm", "x"));
+    TRY(Core::System::unveil(nullptr, nullptr));
 
-    char const* groupname = nullptr;
+    ByteString groupname;
 
     Core::ArgsParser args_parser;
     args_parser.add_positional_argument(groupname, "Group name", "group");
     args_parser.parse(arguments);
 
     setgrent();
-    auto* g = getgrnam(groupname);
+    auto* g = getgrnam(groupname.characters());
 
     // Check if the group exists
     if (!g) {
@@ -58,9 +58,10 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 
     // Create a temporary group file
     char temp_group[] = "/etc/group.XXXXXX";
+    StringView temp_group_view { temp_group, strlen(temp_group) };
 
     auto unlink_temp_files = [&] {
-        if (Core::System::unlink(temp_group).is_error())
+        if (Core::System::unlink(temp_group_view).is_error())
             perror("unlink");
     };
 
@@ -92,8 +93,8 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return 1;
     }
 
-    TRY(Core::System::chmod(temp_group, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH));
-    TRY(Core::System::rename(temp_group, "/etc/group"));
+    TRY(Core::System::chmod(temp_group_view, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH));
+    TRY(Core::System::rename(temp_group_view, "/etc/group"sv));
 
     unlink_temp_files_guard.disarm();
 

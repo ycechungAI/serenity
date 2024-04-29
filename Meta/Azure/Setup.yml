@@ -7,32 +7,35 @@ steps:
 
   - ${{ if eq(parameters.os, 'Serenity') }}:
     - script: |
-        sudo add-apt-repository ppa:canonical-server/server-backports
-        sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+        set -e
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+        sudo add-apt-repository 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main'
         sudo apt-get update
-        sudo apt-get install ccache e2fsprogs gcc-11 g++-11 libstdc++-11-dev libmpfr-dev libmpc-dev ninja-build qemu-utils qemu-system-i386 unzip lld
+        sudo apt-get install clang-format-18 ccache e2fsprogs gcc-13 g++-13 libstdc++-13-dev libmpfr-dev libmpc-dev ninja-build qemu-utils qemu-system-i386 unzip lld
       displayName: 'Install Dependencies'
 
   - ${{ if eq(parameters.os, 'Linux') }}:
     - script: |
-        sudo apt-get purge -y clang-11 clang-12 gcc-10
-        sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+        set -e
+        sudo apt-get purge -y clang-13 clang-14 clang-15 gcc-10 gcc-11 gcc-12
         wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-        sudo add-apt-repository 'deb http://apt.llvm.org/focal/ llvm-toolchain-focal-13 main'
+        sudo add-apt-repository 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main'
         sudo apt-get update
-        sudo apt-get install ccache gcc-11 g++-11 clang-13 libstdc++-11-dev ninja-build unzip
+        sudo apt-get install ccache clang-18 clang++-18 lld-18 ninja-build unzip qt6-base-dev qt6-tools-dev-tools libqt6svg6-dev qt6-multimedia-dev libgl1-mesa-dev libpulse-dev libssl-dev libegl1-mesa-dev
 
-        sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-13 100
-        sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-13 100
-        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
-        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
+        sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+        sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 100
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100
+        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
 
         wget https://github.com/WebAssembly/wabt/releases/download/1.0.23/wabt-1.0.23-ubuntu.tar.gz
         tar -xzf ./wabt-1.0.23-ubuntu.tar.gz
         rm ./wabt-1.0.23-ubuntu.tar.gz
       displayName: 'Install Dependencies'
 
-  - ${{ if eq(parameters.os, 'macOS') }}:
+  - ${{ if or(eq(parameters.os, 'macOS'), eq(parameters.os, 'Android') ) }}:
+    # macOS ships an ancient Bash 3.x by default
     - script: |
-        brew install ninja wabt ccache unzip
+        set -e
+        brew install coreutils bash ninja wabt ccache unzip qt llvm@18
       displayName: 'Install Dependencies'

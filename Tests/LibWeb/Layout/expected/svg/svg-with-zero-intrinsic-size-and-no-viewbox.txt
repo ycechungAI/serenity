@@ -1,0 +1,9 @@
+Viewport <#document> at (0,0) content-size 800x600 children: inline
+  InlineNode <svg>
+    TextNode <#text>
+    InlineNode <rect>
+    TextNode <#text>
+
+ViewportPaintable (Viewport<#document>) [0,0 800x600]
+  InlinePaintable (InlineNode<svg>)
+    InlinePaintable (InlineNode<rect>)

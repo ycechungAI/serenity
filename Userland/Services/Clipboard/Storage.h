@@ -6,9 +6,9 @@
 
 #pragma once
 
+#include <AK/ByteString.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
-#include <AK/String.h>
 #include <LibCore/AnonymousBuffer.h>
 
 namespace Clipboard {
@@ -20,10 +20,10 @@ public:
 
     bool has_data() const { return m_buffer.is_valid(); }
 
-    const String& mime_type() const { return m_mime_type; }
-    const HashMap<String, String>& metadata() const { return m_metadata; }
+    ByteString const& mime_type() const { return m_mime_type; }
+    HashMap<ByteString, ByteString> const& metadata() const { return m_metadata; }
 
-    const u8* data() const
+    u8 const* data() const
     {
         if (!has_data())
             return nullptr;
@@ -37,19 +37,19 @@ public:
         return 0;
     }
 
-    void set_data(Core::AnonymousBuffer, const String& mime_type, const HashMap<String, String>& metadata);
+    void set_data(Core::AnonymousBuffer, ByteString const& mime_type, HashMap<ByteString, ByteString> const& metadata);
 
     Function<void()> on_content_change;
 
-    const Core::AnonymousBuffer& buffer() const { return m_buffer; }
+    Core::AnonymousBuffer const& buffer() const { return m_buffer; }
 
 private:
     Storage() = default;
 
-    String m_mime_type;
+    ByteString m_mime_type;
     Core::AnonymousBuffer m_buffer;
     size_t m_data_size { 0 };
-    HashMap<String, String> m_metadata;
+    HashMap<ByteString, ByteString> m_metadata;
 };
 
 }

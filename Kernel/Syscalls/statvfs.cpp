@@ -6,7 +6,7 @@
 
 #include <Kernel/FileSystem/Custody.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
-#include <Kernel/Process.h>
+#include <Kernel/Tasks/Process.h>
 
 namespace Kernel {
 
@@ -14,7 +14,7 @@ ErrorOr<FlatPtr> Process::do_statvfs(FileSystem const& fs, Custody const* custod
 {
     statvfs kernelbuf = {};
 
-    kernelbuf.f_bsize = static_cast<u64>(fs.block_size());
+    kernelbuf.f_bsize = static_cast<u64>(fs.logical_block_size());
     kernelbuf.f_frsize = fs.fragment_size();
     kernelbuf.f_blocks = fs.total_block_count();
     kernelbuf.f_bfree = fs.free_block_count();
@@ -30,6 +30,8 @@ ErrorOr<FlatPtr> Process::do_statvfs(FileSystem const& fs, Custody const* custod
 
     kernelbuf.f_namemax = 255;
 
+    (void)fs.class_name().copy_characters_to_buffer(kernelbuf.f_basetype, FSTYPSZ);
+
     if (custody)
         kernelbuf.f_flag = custody->mount_flags();
 
@@ -37,15 +39,15 @@ ErrorOr<FlatPtr> Process::do_statvfs(FileSystem const& fs, Custody const* custod
     return 0;
 }
 
-ErrorOr<FlatPtr> Process::sys$statvfs(Userspace<const Syscall::SC_statvfs_params*> user_params)
+ErrorOr<FlatPtr> Process::sys$statvfs(Userspace<Syscall::SC_statvfs_params const*> user_params)
 {
-    VERIFY_PROCESS_BIG_LOCK_ACQUIRED(this)
+    VERIFY_NO_PROCESS_BIG_LOCK(this);
     TRY(require_promise(Pledge::rpath));
     auto params = TRY(copy_typed_from_user(user_params));
 
     auto path = TRY(get_syscall_path_argument(params.path));
 
-    auto custody = TRY(VirtualFileSystem::the().resolve_path(path->view(), current_directory(), nullptr, 0));
+    auto custody = TRY(VirtualFileSystem::the().resolve_path(credentials(), path->view(), current_directory(), nullptr, 0));
     auto& inode = custody->inode();
     auto const& fs = inode.fs();
 

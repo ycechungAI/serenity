@@ -47,16 +47,18 @@ public:
     QueueChain pop_used_buffer_chain(size_t& used);
     void discard_used_buffers();
 
-    Spinlock& lock() { return m_lock; }
+    Spinlock<LockRank::None>& lock() { return m_lock; }
 
     bool should_notify() const;
+
+    u16 size() const { return m_queue_size; }
 
 private:
     Queue(NonnullOwnPtr<Memory::Region> queue_region, u16 queue_size, u16 notify_offset);
 
     void reclaim_buffer_chain(u16 chain_start_index, u16 chain_end_index, size_t length_of_chain);
 
-    PhysicalAddress to_physical(const void* ptr) const
+    PhysicalAddress to_physical(void const* ptr) const
     {
         auto offset = FlatPtr(ptr) - m_queue_region->vaddr().get();
         return m_queue_region->physical_page(0)->paddr().offset(offset);
@@ -85,8 +87,8 @@ private:
         QueueDeviceItem rings[];
     };
 
-    const u16 m_queue_size;
-    const u16 m_notify_offset;
+    u16 const m_queue_size;
+    u16 const m_notify_offset;
     u16 m_free_buffers;
     u16 m_free_head { 0 };
     u16 m_used_tail { 0 };
@@ -96,7 +98,7 @@ private:
     QueueDriver* m_driver { nullptr };
     QueueDevice* m_device { nullptr };
     NonnullOwnPtr<Memory::Region> m_queue_region;
-    Spinlock m_lock;
+    Spinlock<LockRank::None> m_lock {};
 
     friend class QueueChain;
 };

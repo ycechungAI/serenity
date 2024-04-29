@@ -7,28 +7,31 @@
 #pragma once
 
 #ifdef __cplusplus
-#    include <Kernel/Multiboot.h>
-#    include <Kernel/PhysicalAddress.h>
-#    include <Kernel/VirtualAddress.h>
+#    include <Kernel/Boot/Multiboot.h>
+#    include <Kernel/Memory/PhysicalAddress.h>
+#    include <Kernel/Memory/VirtualAddress.h>
 #endif
 
 #define MAX_KERNEL_SIZE 0x4000000
 #define KERNEL_PD_SIZE 0x31000000
 
+// FIXME: This should be using the define from Sections.h, but that currently is not possible
+//        and causes linker errors, because Sections.h includes BootInfo.h.
+#define KERNEL_MAPPING_BASE 0x2000000000
+
 #ifdef __cplusplus
 namespace Kernel {
 
+#    if ARCH(X86_64)
 struct [[gnu::packed]] BootInfo {
     u32 start_of_prekernel_image;
     u32 end_of_prekernel_image;
     u64 physical_to_virtual_offset;
     u64 kernel_mapping_base;
     u64 kernel_load_base;
-#    if ARCH(X86_64)
     u32 gdt64ptr;
     u16 code64_sel;
     u32 boot_pml4t;
-#    endif
     u32 boot_pdpt;
     u32 boot_pd0;
     u32 boot_pd_kernel;
@@ -46,5 +49,14 @@ struct [[gnu::packed]] BootInfo {
     u8 multiboot_framebuffer_bpp;
     u8 multiboot_framebuffer_type;
 };
+#    elif ARCH(AARCH64)
+struct BootInfo { };
+#    elif ARCH(RISCV64)
+struct BootInfo {
+    FlatPtr mhartid;
+    PhysicalPtr fdt_phys_addr;
+};
+#    endif
+
 }
 #endif

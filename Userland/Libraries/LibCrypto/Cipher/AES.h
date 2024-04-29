@@ -14,11 +14,10 @@
 #include <LibCrypto/Cipher/Mode/GCM.h>
 
 #ifndef KERNEL
-#    include <AK/String.h>
+#    include <AK/ByteString.h>
 #endif
 
-namespace Crypto {
-namespace Cipher {
+namespace Crypto::Cipher {
 
 struct AESCipherBlock : public CipherBlock {
 public:
@@ -28,19 +27,19 @@ public:
         : CipherBlock(mode)
     {
     }
-    AESCipherBlock(const u8* data, size_t length, PaddingMode mode = PaddingMode::CMS)
+    AESCipherBlock(u8 const* data, size_t length, PaddingMode mode = PaddingMode::CMS)
         : AESCipherBlock(mode)
     {
         CipherBlock::overwrite(data, length);
     }
 
-    constexpr static size_t block_size() { return BlockSizeInBits / 8; };
+    constexpr static size_t block_size() { return BlockSizeInBits / 8; }
 
     virtual ReadonlyBytes bytes() const override { return ReadonlyBytes { m_data, sizeof(m_data) }; }
     virtual Bytes bytes() override { return Bytes { m_data, sizeof(m_data) }; }
 
     virtual void overwrite(ReadonlyBytes) override;
-    virtual void overwrite(const u8* data, size_t size) override { overwrite({ data, size }); }
+    virtual void overwrite(u8 const* data, size_t size) override { overwrite({ data, size }); }
 
     virtual void apply_initialization_vector(ReadonlyBytes ivec) override
     {
@@ -49,7 +48,7 @@ public:
     }
 
 #ifndef KERNEL
-    String to_string() const;
+    ByteString to_byte_string() const;
 #endif
 
 private:
@@ -59,18 +58,18 @@ private:
 };
 
 struct AESCipherKey : public CipherKey {
-    virtual ReadonlyBytes bytes() const override { return ReadonlyBytes { m_rd_keys, sizeof(m_rd_keys) }; };
+    virtual ReadonlyBytes bytes() const override { return ReadonlyBytes { m_rd_keys, sizeof(m_rd_keys) }; }
     virtual void expand_encrypt_key(ReadonlyBytes user_key, size_t bits) override;
     virtual void expand_decrypt_key(ReadonlyBytes user_key, size_t bits) override;
-    static bool is_valid_key_size(size_t bits) { return bits == 128 || bits == 192 || bits == 256; };
+    static bool is_valid_key_size(size_t bits) { return bits == 128 || bits == 192 || bits == 256; }
 
 #ifndef KERNEL
-    String to_string() const;
+    ByteString to_byte_string() const;
 #endif
 
-    const u32* round_keys() const
+    u32 const* round_keys() const
     {
-        return (const u32*)m_rd_keys;
+        return (u32 const*)m_rd_keys;
     }
 
     AESCipherKey(ReadonlyBytes user_key, size_t key_bits, Intent intent)
@@ -114,14 +113,14 @@ public:
     {
     }
 
-    virtual const AESCipherKey& key() const override { return m_key; };
-    virtual AESCipherKey& key() override { return m_key; };
+    virtual AESCipherKey const& key() const override { return m_key; }
+    virtual AESCipherKey& key() override { return m_key; }
 
-    virtual void encrypt_block(const BlockType& in, BlockType& out) override;
-    virtual void decrypt_block(const BlockType& in, BlockType& out) override;
+    virtual void encrypt_block(BlockType const& in, BlockType& out) override;
+    virtual void decrypt_block(BlockType const& in, BlockType& out) override;
 
 #ifndef KERNEL
-    virtual String class_name() const override
+    virtual ByteString class_name() const override
     {
         return "AES";
     }
@@ -131,5 +130,4 @@ protected:
     AESCipherKey m_key;
 };
 
-}
 }

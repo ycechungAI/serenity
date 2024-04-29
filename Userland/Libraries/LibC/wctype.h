@@ -6,9 +6,19 @@
 
 #pragma once
 
-#include <assert.h>
+// Includes essentially mandated by POSIX:
+// https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/wctype.h.html
 #include <ctype.h>
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #include <wchar.h>
+
+#include <assert.h>
+#include <sys/cdefs.h>
 
 __BEGIN_DECLS
 
@@ -27,10 +37,10 @@ int iswlower(wint_t wc);
 int iswupper(wint_t wc);
 int iswblank(wint_t wc);
 int iswctype(wint_t, wctype_t);
-wctype_t wctype(const char*);
+wctype_t wctype(char const*);
 wint_t towlower(wint_t wc);
 wint_t towupper(wint_t wc);
 wint_t towctrans(wint_t, wctrans_t);
-wctrans_t wctrans(const char*);
+wctrans_t wctrans(char const*);
 
 __END_DECLS

@@ -13,7 +13,7 @@
 #include <LibGUI/Frame.h>
 #include <LibGUI/Painter.h>
 #include <LibGfx/Bitmap.h>
-#include <LibGfx/Font.h>
+#include <LibGfx/Font/Font.h>
 #include <LibGfx/StandardCursor.h>
 
 namespace FlappyBug {
@@ -39,11 +39,13 @@ private:
     bool ready_to_start() const;
     void player_input();
 
+    static u32 get_final_score(float score);
+
 public:
     struct Bug {
-        const float x { 50 };
-        const float radius { 16 };
-        const float starting_y { 200 };
+        float const x { 50 };
+        float const radius { 16 };
+        float const starting_y { 200 };
         NonnullRefPtr<Gfx::Bitmap> falling_bitmap;
         NonnullRefPtr<Gfx::Bitmap> flapping_bitmap;
         float y {};
@@ -59,8 +61,8 @@ public:
     public:
         static ErrorOr<Bug> construct()
         {
-            NonnullRefPtr<Gfx::Bitmap> falling_bitmap = TRY(Gfx::Bitmap::try_load_from_file("/res/icons/flappybug/falling.png"));
-            NonnullRefPtr<Gfx::Bitmap> flapping_bitmap = TRY(Gfx::Bitmap::try_load_from_file("/res/icons/flappybug/flapping.png"));
+            NonnullRefPtr<Gfx::Bitmap> falling_bitmap = TRY(Gfx::Bitmap::load_from_file("/res/graphics/flappybug/falling.png"sv));
+            NonnullRefPtr<Gfx::Bitmap> flapping_bitmap = TRY(Gfx::Bitmap::load_from_file("/res/graphics/flappybug/flapping.png"sv));
             return Bug(move(falling_bitmap), move(flapping_bitmap));
         }
 
@@ -81,13 +83,13 @@ public:
 
         void flap()
         {
-            const float flap_strength = 10.0f;
+            float const flap_strength = 10.0f;
             velocity = -flap_strength;
         }
 
         void fall()
         {
-            const float gravity = 1.0f;
+            float const gravity = 1.0f;
             velocity += gravity;
         }
 
@@ -98,7 +100,7 @@ public:
     };
 
     struct Obstacle {
-        const float width { 20 };
+        float const width { 20 };
         Color color { Color::DarkGray };
         float x {};
         float gap_top_y { 200 };
@@ -139,9 +141,9 @@ public:
         static ErrorOr<Cloud> construct()
         {
             Vector<NonnullRefPtr<Gfx::Bitmap>> const cloud_bitmaps {
-                TRY(Gfx::Bitmap::try_load_from_file("/res/icons/flappybug/cloud_0.png")),
-                TRY(Gfx::Bitmap::try_load_from_file("/res/icons/flappybug/cloud_1.png")),
-                TRY(Gfx::Bitmap::try_load_from_file("/res/icons/flappybug/cloud_2.png")),
+                TRY(Gfx::Bitmap::load_from_file("/res/graphics/flappybug/cloud_0.png"sv)),
+                TRY(Gfx::Bitmap::load_from_file("/res/graphics/flappybug/cloud_1.png"sv)),
+                TRY(Gfx::Bitmap::load_from_file("/res/graphics/flappybug/cloud_2.png"sv)),
             };
             return Cloud(move(cloud_bitmaps));
         }
@@ -169,13 +171,13 @@ private:
     Obstacle m_obstacle;
     Cloud m_cloud;
     bool m_active;
-    Optional<float> m_high_score {};
+    Optional<u32> m_high_score {};
     float m_last_score {};
     float m_difficulty {};
     float m_restart_cooldown {};
-    NonnullRefPtr<Gfx::Bitmap> m_background_bitmap { Gfx::Bitmap::try_load_from_file("/res/icons/flappybug/background.png").release_value_but_fixme_should_propagate_errors() };
-    const Gfx::IntRect m_score_rect { 10, 10, 20, 20 };
-    const Gfx::IntRect m_text_rect { game_width / 2 - 80, game_height / 2 - 40, 160, 80 };
+    NonnullRefPtr<Gfx::Bitmap> m_background_bitmap { Gfx::Bitmap::load_from_file("/res/graphics/flappybug/background.png"sv).release_value_but_fixme_should_propagate_errors() };
+    Gfx::IntRect const m_score_rect { 10, 10, 20, 20 };
+    Gfx::IntRect const m_text_rect { game_width / 2 - 80, game_height / 2 - 40, 160, 80 };
 
     Game(Bug, Cloud);
 };

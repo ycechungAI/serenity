@@ -20,24 +20,24 @@ namespace WindowServer {
 
 EventLoop::EventLoop()
 {
-    m_keyboard_fd = open("/dev/keyboard0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-    m_mouse_fd = open("/dev/mouse0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    m_keyboard_fd = open("/dev/input/keyboard/0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    m_mice_fd = open("/dev/input/mice", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 
     m_window_server = MUST(IPC::MultiServer<ConnectionFromClient>::try_create("/tmp/portal/window"));
     m_wm_server = MUST(IPC::MultiServer<WMConnectionFromClient>::try_create("/tmp/portal/wm"));
 
     if (m_keyboard_fd >= 0) {
-        m_keyboard_notifier = Core::Notifier::construct(m_keyboard_fd, Core::Notifier::Read);
-        m_keyboard_notifier->on_ready_to_read = [this] { drain_keyboard(); };
+        m_keyboard_notifier = Core::Notifier::construct(m_keyboard_fd, Core::Notifier::Type::Read);
+        m_keyboard_notifier->on_activation = [this] { drain_keyboard(); };
     } else {
-        dbgln("Couldn't open /dev/keyboard0");
+        dbgln("Couldn't open /dev/input/keyboard/0");
     }
 
-    if (m_mouse_fd >= 0) {
-        m_mouse_notifier = Core::Notifier::construct(m_mouse_fd, Core::Notifier::Read);
-        m_mouse_notifier->on_ready_to_read = [this] { drain_mouse(); };
+    if (m_mice_fd >= 0) {
+        m_mouse_notifier = Core::Notifier::construct(m_mice_fd, Core::Notifier::Type::Read);
+        m_mouse_notifier->on_activation = [this] { drain_mouse(); };
     } else {
-        dbgln("Couldn't open /dev/mouse0");
+        dbgln("Couldn't open /dev/input/mice");
     }
 }
 
@@ -48,7 +48,7 @@ void EventLoop::drain_mouse()
     state.buttons = screen_input.mouse_button_state();
     MousePacket packets[32];
 
-    ssize_t nread = read(m_mouse_fd, &packets, sizeof(packets));
+    ssize_t nread = read(m_mice_fd, &packets, sizeof(packets));
     if (nread < 0) {
         perror("EventLoop::drain_mouse read");
         return;
@@ -70,9 +70,14 @@ void EventLoop::drain_mouse()
             state.x = packet.x;
             state.y = packet.y;
         }
-        state.z += packet.z;
         state.w += packet.w;
         state_is_sent = false;
+
+        // Invert scroll direction if checked in the settings.
+        if (WindowManager::the().is_natural_scroll())
+            state.z -= packet.z;
+        else
+            state.z += packet.z;
 
         if (packet.buttons != state.buttons) {
             state.buttons = packet.buttons;
@@ -80,7 +85,7 @@ void EventLoop::drain_mouse()
 
             // Swap primary (1) and secondary (2) buttons if checked in Settings.
             // Doing the swap here avoids all emulator and hardware issues.
-            if (WindowManager::the().get_buttons_switched()) {
+            if (WindowManager::the().are_mouse_buttons_switched()) {
                 bool has_primary = state.buttons & MousePacket::Button::LeftButton;
                 bool has_secondary = state.buttons & MousePacket::Button::RightButton;
                 state.buttons = state.buttons & ~(MousePacket::Button::LeftButton | MousePacket::Button::RightButton);

@@ -8,10 +8,11 @@
 #include "Spreadsheet.h"
 #include <AK/StringBuilder.h>
 #include <AK/TemporaryChange.h>
+#include <LibJS/Runtime/ValueInlines.h>
 
 namespace Spreadsheet {
 
-void Cell::set_data(String new_data)
+void Cell::set_data(ByteString new_data)
 {
     // If we are a formula, we do not save the beginning '=', if the new_data is "" we can simply change our kind
     if (m_kind == Formula && m_data.is_empty() && new_data.is_empty()) {
@@ -22,7 +23,7 @@ void Cell::set_data(String new_data)
     if (m_data == new_data)
         return;
 
-    if (new_data.starts_with("=")) {
+    if (new_data.starts_with('=')) {
         new_data = new_data.substring(1, new_data.length() - 1);
         m_kind = Formula;
     } else {
@@ -42,12 +43,12 @@ void Cell::set_data(JS::Value new_data)
     StringBuilder builder;
 
     builder.append(new_data.to_string_without_side_effects());
-    m_data = builder.build();
+    m_data = builder.to_byte_string();
 
     m_evaluated_data = move(new_data);
 }
 
-void Cell::set_type(const CellType* type)
+void Cell::set_type(CellType const* type)
 {
     m_type = type;
 }
@@ -62,25 +63,30 @@ void Cell::set_type(StringView name)
     VERIFY_NOT_REACHED();
 }
 
+void Cell::set_type_metadata(CellTypeMetadata const& metadata)
+{
+    m_type_metadata = metadata;
+}
+
 void Cell::set_type_metadata(CellTypeMetadata&& metadata)
 {
     m_type_metadata = move(metadata);
 }
 
-const CellType& Cell::type() const
+CellType const& Cell::type() const
 {
     if (m_type)
         return *m_type;
 
     if (m_kind == LiteralString) {
-        if (m_data.to_int().has_value())
-            return *CellType::get_by_name("Numeric");
+        if (m_data.to_number<int>().has_value())
+            return *CellType::get_by_name("Numeric"sv);
     }
 
-    return *CellType::get_by_name("Identity");
+    return *CellType::get_by_name("Identity"sv);
 }
 
-JS::ThrowCompletionOr<String> Cell::typed_display() const
+JS::ThrowCompletionOr<ByteString> Cell::typed_display() const
 {
     return type().display(const_cast<Cell&>(*this), m_type_metadata);
 }
@@ -153,16 +159,17 @@ JS::Value Cell::js_data()
     if (m_kind == Formula)
         return m_evaluated_data;
 
-    return JS::js_string(m_sheet->interpreter().heap(), m_data);
+    auto& vm = m_sheet->vm();
+    return JS::PrimitiveString::create(vm, m_data);
 }
 
-String Cell::source() const
+ByteString Cell::source() const
 {
     StringBuilder builder;
     if (m_kind == Formula)
         builder.append('=');
     builder.append(m_data);
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
 // FIXME: Find a better way to figure out dependencies
@@ -171,13 +178,13 @@ void Cell::reference_from(Cell* other)
     if (!other || other == this)
         return;
 
-    if (!m_referencing_cells.find_if([other](const auto& ptr) { return ptr.ptr() == other; }).is_end())
+    if (!m_referencing_cells.find_if([other](auto const& ptr) { return ptr.ptr() == other; }).is_end())
         return;
 
     m_referencing_cells.append(other->make_weak_ptr());
 }
 
-void Cell::copy_from(const Cell& other)
+void Cell::copy_from(Cell const& other)
 {
     m_dirty = true;
     m_evaluated_externally = other.m_evaluated_externally;
@@ -189,23 +196,6 @@ void Cell::copy_from(const Cell& other)
     m_conditional_formats = other.m_conditional_formats;
     m_evaluated_formats = other.m_evaluated_formats;
     m_thrown_value = other.m_thrown_value;
-}
-
-CellUndoCommand::CellUndoCommand(Cell& cell, String const& previous_data)
-    : m_cell(cell)
-    , m_current_data(cell.data())
-    , m_previous_data(previous_data)
-{
-}
-
-void CellUndoCommand::undo()
-{
-    m_cell.set_data(m_previous_data);
-}
-
-void CellUndoCommand::redo()
-{
-    m_cell.set_data(m_current_data);
 }
 
 }

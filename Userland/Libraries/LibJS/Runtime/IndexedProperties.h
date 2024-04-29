@@ -15,6 +15,8 @@ namespace JS {
 struct ValueAndAttributes {
     Value value;
     PropertyAttributes attributes { default_attributes };
+
+    Optional<u32> property_offset {};
 };
 
 class IndexedProperties;
@@ -24,6 +26,11 @@ class GenericIndexedPropertyStorage;
 class IndexedPropertyStorage {
 public:
     virtual ~IndexedPropertyStorage() = default;
+
+    enum class IsSimpleStorage {
+        No,
+        Yes,
+    };
 
     virtual bool has_index(u32 index) const = 0;
     virtual Optional<ValueAndAttributes> get(u32 index) const = 0;
@@ -37,12 +44,20 @@ public:
     virtual size_t array_like_size() const = 0;
     virtual bool set_array_like_size(size_t new_size) = 0;
 
-    virtual bool is_simple_storage() const { return false; }
+    bool is_simple_storage() const { return m_is_simple_storage; }
+
+protected:
+    explicit IndexedPropertyStorage(IsSimpleStorage is_simple_storage)
+        : m_is_simple_storage(is_simple_storage == IsSimpleStorage::Yes) {};
+
+private:
+    bool m_is_simple_storage { false };
 };
 
 class SimpleIndexedPropertyStorage final : public IndexedPropertyStorage {
 public:
-    SimpleIndexedPropertyStorage() = default;
+    SimpleIndexedPropertyStorage()
+        : IndexedPropertyStorage(IsSimpleStorage::Yes) {};
     explicit SimpleIndexedPropertyStorage(Vector<Value>&& initial_values);
 
     virtual bool has_index(u32 index) const override;
@@ -57,8 +72,7 @@ public:
     virtual size_t array_like_size() const override { return m_array_size; }
     virtual bool set_array_like_size(size_t new_size) override;
 
-    virtual bool is_simple_storage() const override { return true; }
-    const Vector<Value>& elements() const { return m_packed_elements; }
+    Vector<Value> const& elements() const { return m_packed_elements; }
 
 private:
     friend GenericIndexedPropertyStorage;
@@ -72,7 +86,8 @@ private:
 class GenericIndexedPropertyStorage final : public IndexedPropertyStorage {
 public:
     explicit GenericIndexedPropertyStorage(SimpleIndexedPropertyStorage&&);
-    explicit GenericIndexedPropertyStorage() = default;
+    explicit GenericIndexedPropertyStorage()
+        : IndexedPropertyStorage(IsSimpleStorage::No) {};
 
     virtual bool has_index(u32 index) const override;
     virtual Optional<ValueAndAttributes> get(u32 index) const override;
@@ -86,7 +101,7 @@ public:
     virtual size_t array_like_size() const override { return m_array_size; }
     virtual bool set_array_like_size(size_t new_size) override;
 
-    const HashMap<u32, ValueAndAttributes>& sparse_elements() const { return m_sparse_elements; }
+    HashMap<u32, ValueAndAttributes> const& sparse_elements() const { return m_sparse_elements; }
 
 private:
     size_t m_array_size { 0 };
@@ -95,18 +110,18 @@ private:
 
 class IndexedPropertyIterator {
 public:
-    IndexedPropertyIterator(const IndexedProperties&, u32 starting_index, bool skip_empty);
+    IndexedPropertyIterator(IndexedProperties const&, u32 starting_index, bool skip_empty);
 
     IndexedPropertyIterator& operator++();
     IndexedPropertyIterator& operator*();
-    bool operator!=(const IndexedPropertyIterator&) const;
+    bool operator!=(IndexedPropertyIterator const&) const;
 
-    u32 index() const { return m_index; };
+    u32 index() const { return m_index; }
 
 private:
     void skip_empty_indices();
 
-    const IndexedProperties& m_indexed_properties;
+    IndexedProperties const& m_indexed_properties;
     Vector<u32> m_cached_indices;
     u32 m_index { 0 };
     bool m_skip_empty { false };
@@ -129,12 +144,15 @@ public:
 
     void append(Value value, PropertyAttributes attributes = default_attributes) { put(array_like_size(), value, attributes); }
 
-    IndexedPropertyIterator begin(bool skip_empty = true) const { return IndexedPropertyIterator(*this, 0, skip_empty); };
-    IndexedPropertyIterator end() const { return IndexedPropertyIterator(*this, array_like_size(), false); };
+    IndexedPropertyIterator begin(bool skip_empty = true) const { return IndexedPropertyIterator(*this, 0, skip_empty); }
+    IndexedPropertyIterator end() const { return IndexedPropertyIterator(*this, array_like_size(), false); }
 
     bool is_empty() const { return array_like_size() == 0; }
     size_t array_like_size() const { return m_storage ? m_storage->array_like_size() : 0; }
     bool set_array_like_size(size_t);
+
+    IndexedPropertyStorage* storage() { return m_storage; }
+    IndexedPropertyStorage const* storage() const { return m_storage; }
 
     size_t real_size() const;
 
@@ -149,7 +167,7 @@ public:
             for (auto& value : static_cast<SimpleIndexedPropertyStorage&>(*m_storage).elements())
                 callback(value);
         } else {
-            for (auto& element : static_cast<const GenericIndexedPropertyStorage&>(*m_storage).sparse_elements())
+            for (auto& element : static_cast<GenericIndexedPropertyStorage const&>(*m_storage).sparse_elements())
                 callback(element.value.value);
         }
     }

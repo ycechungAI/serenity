@@ -8,10 +8,20 @@
 
 #define AK_MAKE_NONCOPYABLE(c) \
 private:                       \
-    c(const c&) = delete;      \
-    c& operator=(const c&) = delete
+    c(c const&) = delete;      \
+    c& operator=(c const&) = delete
 
 #define AK_MAKE_NONMOVABLE(c) \
 private:                      \
     c(c&&) = delete;          \
     c& operator=(c&&) = delete
+
+#define AK_MAKE_DEFAULT_MOVABLE(c) \
+public:                            \
+    c(c&&) = default;              \
+    c& operator=(c&&) = default
+
+#define AK_MAKE_DEFAULT_COPYABLE(c) \
+public:                             \
+    c(c const&) = default;          \
+    c& operator=(c const&) = default

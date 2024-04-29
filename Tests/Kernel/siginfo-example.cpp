@@ -11,18 +11,17 @@
 #include <unistd.h>
 
 // Supposed to use volatile everywhere here but good lord does C++ make that a pain
-volatile sig_atomic_t saved_signal;
-volatile siginfo_t saved_siginfo;
-volatile ucontext_t saved_ucontext;
+sig_atomic_t volatile saved_signal;
+siginfo_t volatile saved_siginfo;
+ucontext_t volatile saved_ucontext;
 siginfo_t* sig_info_addr;
 ucontext_t* ucontext_addr;
 void* stack_ptr;
-volatile bool signal_was_delivered = false;
+bool volatile signal_was_delivered = false;
 
 static void signal_handler(int sig, siginfo_t* sig_info, void* u_context)
 {
-    int x;
-    stack_ptr = &x;
+    stack_ptr = __builtin_frame_address(0);
     signal_was_delivered = true;
 
     saved_signal = sig;

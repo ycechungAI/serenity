@@ -12,7 +12,7 @@ sysctl - configure kernel parameters at runtime
 
 sysctl is a utility for managing kernel configuration parameters at runtime.
 This requires root privileges, and can crash your system.
-Available parameters are listed under /proc/sys/.
+Available parameters are listed under /sys/kernel/conf/.
 
 ## Options
 
@@ -26,7 +26,7 @@ Available parameters are listed under /proc/sys/.
 
 ## Files
 
-* `/proc/sys` - source of kernel parameters
+* `/sys/kernel/conf` - source of kernel parameters
 
 ## Examples
 

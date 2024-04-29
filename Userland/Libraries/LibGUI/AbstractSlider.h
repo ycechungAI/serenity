@@ -30,7 +30,12 @@ public:
     bool is_max() const { return m_value == m_max; }
 
     void set_range(int min, int max);
-    virtual void set_value(int, AllowCallback = AllowCallback::Yes);
+
+    enum class DoClamp {
+        Yes = 1,
+        No = 0
+    };
+    virtual void set_value(int, AllowCallback = AllowCallback::Yes, DoClamp = DoClamp::Yes);
 
     void set_min(int min) { set_range(min, max()); }
     void set_max(int max) { set_range(min(), max); }
@@ -51,8 +56,6 @@ protected:
     explicit AbstractSlider(Orientation = Orientation::Vertical);
 
 private:
-    void set_knob_hovered(bool);
-
     int m_value { 0 };
     int m_min { 0 };
     int m_max { 0 };

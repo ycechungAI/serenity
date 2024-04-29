@@ -5,13 +5,14 @@
  */
 
 #include "CookiesModel.h"
+#include <AK/FuzzyMatch.h>
 
 namespace Browser {
 
-void CookiesModel::add_item(Web::Cookie::Cookie const& item)
+void CookiesModel::set_items(AK::Vector<Web::Cookie::Cookie> items)
 {
     begin_insert_rows({}, m_cookies.size(), m_cookies.size());
-    m_cookies.append(item);
+    m_cookies = move(items);
     end_insert_rows();
 
     did_update(DontInvalidateIndices);
@@ -26,24 +27,33 @@ void CookiesModel::clear_items()
     did_update(DontInvalidateIndices);
 }
 
-String CookiesModel::column_name(int column) const
+int CookiesModel::row_count(GUI::ModelIndex const& index) const
+{
+    if (!index.is_valid())
+        return m_cookies.size();
+    return 0;
+}
+
+ErrorOr<String> CookiesModel::column_name(int column) const
 {
     switch (column) {
-    case Column::Name:
-        return "Name";
-    case Column::Value:
-        return "Value";
     case Column::Domain:
-        return "Domain";
+        return "Domain"_string;
     case Column::Path:
-        return "Path";
+        return "Path"_string;
+    case Column::Name:
+        return "Name"_string;
+    case Column::Value:
+        return "Value"_string;
     case Column::ExpiryTime:
-        return "Expiry time";
+        return "Expiry time"_string;
+    case Column::SameSite:
+        return "SameSite"_string;
     case Column::__Count:
-        return {};
+        return String {};
     }
 
-    return {};
+    return String {};
 }
 
 GUI::ModelIndex CookiesModel::index(int row, int column, GUI::ModelIndex const&) const
@@ -58,22 +68,56 @@ GUI::Variant CookiesModel::data(GUI::ModelIndex const& index, GUI::ModelRole rol
     if (role != GUI::ModelRole::Display)
         return {};
 
-    const auto& cookie = m_cookies[index.row()];
+    auto const& cookie = m_cookies[index.row()];
 
     switch (index.column()) {
-    case Column::Name:
-        return cookie.name;
-    case Column::Value:
-        return cookie.value;
     case Column::Domain:
         return cookie.domain;
     case Column::Path:
         return cookie.path;
+    case Column::Name:
+        return cookie.name;
+    case Column::Value:
+        return cookie.value;
     case Column::ExpiryTime:
-        return cookie.expiry_time.to_string();
+        return cookie.expiry_time_to_string();
+    case Column::SameSite:
+        return Web::Cookie::same_site_to_string(cookie.same_site);
     }
 
     VERIFY_NOT_REACHED();
+}
+
+GUI::Model::MatchResult CookiesModel::data_matches(GUI::ModelIndex const& index, GUI::Variant const& term) const
+{
+    auto needle = term.as_string();
+    if (needle.is_empty())
+        return { TriState::True };
+
+    auto const& cookie = m_cookies[index.row()];
+    auto haystack = ByteString::formatted("{} {} {} {}", cookie.domain, cookie.path, cookie.name, cookie.value);
+    auto match_result = fuzzy_match(needle, haystack);
+    if (match_result.score > 0)
+        return { TriState::True, match_result.score };
+    return { TriState::False };
+}
+
+Web::Cookie::Cookie CookiesModel::take_cookie(GUI::ModelIndex const& index)
+{
+    VERIFY(index.is_valid());
+
+    auto cookie = m_cookies.take(index.row());
+    did_update(InvalidateAllIndices);
+
+    return cookie;
+}
+
+AK::Vector<Web::Cookie::Cookie> CookiesModel::take_all_cookies()
+{
+    auto cookies = move(m_cookies);
+    did_update(InvalidateAllIndices);
+
+    return cookies;
 }
 
 }

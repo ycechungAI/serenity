@@ -1,9 +1,16 @@
+#import <DOM/EventTarget.idl>
+#import <DOM/EventHandler.idl>
+#import <HTML/MessagePort.idl>
+
+// https://html.spec.whatwg.org/#worker
 [Exposed=(Window)]
 interface Worker : EventTarget {
     constructor(DOMString scriptURL, optional WorkerOptions options = {});
 
     undefined terminate();
-    undefined postMessage(any message, optional any transfer);
+    // FIXME: IDL overload issue here
+    // FIXME: undefined postMessage(any message, sequence<object> transfer);
+    undefined postMessage(any message, optional StructuredSerializeOptions options = {});
 
     attribute EventHandler onmessage;
     attribute EventHandler onmessageerror;

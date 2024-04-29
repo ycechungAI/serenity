@@ -26,7 +26,7 @@ public:
     using ServerStub = typename ServerEndpoint::Stub;
     using IPCProxy = typename ClientEndpoint::template Proxy<ServerEndpoint>;
 
-    ConnectionFromClient(ServerStub& stub, NonnullOwnPtr<Core::Stream::LocalSocket> socket, int client_id)
+    ConnectionFromClient(ServerStub& stub, NonnullOwnPtr<Core::LocalSocket> socket, int client_id)
         : IPC::Connection<ServerEndpoint, ClientEndpoint>(stub, move(socket))
         , ClientEndpoint::template Proxy<ServerEndpoint>(*this, {})
         , m_client_id(client_id)
@@ -46,15 +46,15 @@ public:
         this->shutdown();
     }
 
-    void did_misbehave(const char* message)
+    void did_misbehave(char const* message)
     {
         dbgln("{} (id={}) misbehaved ({}), disconnecting.", *this, m_client_id, message);
         this->shutdown();
     }
 
-    void shutdown_with_error(Error const& error)
+    virtual void shutdown_with_error(Error const& error) override
     {
-        dbgln("{} (id={}) had error ({}), disconnecting.", *this, m_client_id, error);
+        dbgln("{} (id={}) had an error ({}), disconnecting.", *this, m_client_id, error);
         this->shutdown();
     }
 
@@ -69,5 +69,5 @@ private:
 }
 
 template<typename ClientEndpoint, typename ServerEndpoint>
-struct AK::Formatter<IPC::ConnectionFromClient<ClientEndpoint, ServerEndpoint>> : Formatter<Core::Object> {
+struct AK::Formatter<IPC::ConnectionFromClient<ClientEndpoint, ServerEndpoint>> : Formatter<Core::EventReceiver> {
 };

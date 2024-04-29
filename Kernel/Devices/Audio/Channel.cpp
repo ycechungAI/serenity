@@ -4,21 +4,26 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <Kernel/API/Ioctl.h>
 #include <Kernel/Devices/Audio/Management.h>
 #include <Kernel/Devices/DeviceManagement.h>
-#include <Kernel/Devices/RandomDevice.h>
-#include <Kernel/Random.h>
+#include <Kernel/Devices/Generic/RandomDevice.h>
 #include <Kernel/Sections.h>
-#include <LibC/sys/ioctl_numbers.h>
+#include <Kernel/Security/Random.h>
 
 namespace Kernel {
 
-UNMAP_AFTER_INIT NonnullRefPtr<AudioChannel> AudioChannel::must_create(AudioController const& controller, size_t channel_index)
+UNMAP_AFTER_INIT ErrorOr<NonnullRefPtr<AudioChannel>> AudioChannel::create(AudioController const& controller, size_t channel_index)
 {
-    auto audio_device_or_error = DeviceManagement::try_create_device<AudioChannel>(controller, channel_index);
-    // FIXME: Find a way to propagate errors
-    VERIFY(!audio_device_or_error.is_error());
-    return audio_device_or_error.release_value();
+    auto channel = TRY(DeviceManagement::try_create_device<AudioChannel>(controller, channel_index));
+
+    // FIXME: Ideally, we would want the audio controller to run a channel at a device's initial sample
+    //        rate instead of hardcoding 44.1 KHz here. However, most audio is provided at 44.1 KHz and as
+    //        long as Audio::Resampler introduces significant audio artifacts, let's set a sensible sample
+    //        rate here. Remove this after implementing a higher quality Audio::Resampler.
+    TRY(const_cast<AudioController&>(controller).set_pcm_output_sample_rate(channel_index, 44100));
+
+    return *channel;
 }
 
 AudioChannel::AudioChannel(AudioController const& controller, size_t channel_index)
@@ -50,7 +55,7 @@ ErrorOr<void> AudioChannel::ioctl(OpenFileDescription&, unsigned request, Usersp
     }
 }
 
-bool AudioChannel::can_read(const OpenFileDescription&, u64) const
+bool AudioChannel::can_read(OpenFileDescription const&, u64) const
 {
     // FIXME: Implement input from device
     return false;

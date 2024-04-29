@@ -61,8 +61,15 @@ The value of this variable is used to generate a prompt, the following escape se
 - `\\h`: the current hostname
 - `\\p`: the string '$' (or '#' if the user is 'root')
 - `\\u`: the current username
-- `\\w`: a collapsed path (relative to home) to the current directory
+- `\\w`, `\\W`: a collapsed path (relative to home) to the current directory. If an integer follows the `\\`, it specifies the number of trailing components of the path to show; if 'w' is used instead of 'W', removed components are shown with ellipsis ("...")
 - `\\X`: reset style (foreground and background color, etc)
+- `\\t`: current time in the 24-hour format HH:MM:SS
+- `\\T`: current time in the 12-hour format HH:MM
+- `\\@`: current time in the 12-hour format HH:MM AM/PM
+- `\\D{format}`: current time, where the string _format_ is passed on to `Core::DateTime::to_string`. If _format_ is empty, a default format string is chosen.
+- `\\j`: the number of jobs currently managed by the shell
+- `\\!`: the history number of the next command to be run
+- `\\\\`: a backslash
 
 Any other escaped character shall be ignored.
 

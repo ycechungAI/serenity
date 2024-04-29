@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Concepts.h>
 #include <AK/SIMD.h>
 
 // Functions returning vectors or accepting vector arguments have different calling conventions
@@ -35,6 +36,18 @@ ALWAYS_INLINE static constexpr u32x4 expand4(u32 u)
 }
 
 // Casting
+
+template<typename TSrc>
+ALWAYS_INLINE static u8x4 to_u8x4(TSrc v)
+{
+    return __builtin_convertvector(v, u8x4);
+}
+
+template<typename TSrc>
+ALWAYS_INLINE static u16x4 to_u16x4(TSrc v)
+{
+    return __builtin_convertvector(v, u16x4);
+}
 
 template<typename TSrc>
 ALWAYS_INLINE static u32x4 to_u32x4(TSrc v)
@@ -154,6 +167,31 @@ ALWAYS_INLINE static void store4_masked(VectorType v, UnderlyingType* a, Underly
         *d = v[3];
 }
 
+// Shuffle
+
+template<OneOf<i8x16, u8x16> T>
+ALWAYS_INLINE static T shuffle(T a, T control)
+{
+    // FIXME: This is probably not the fastest way to do this.
+    return T {
+        a[control[0] & 0xf],
+        a[control[1] & 0xf],
+        a[control[2] & 0xf],
+        a[control[3] & 0xf],
+        a[control[4] & 0xf],
+        a[control[5] & 0xf],
+        a[control[6] & 0xf],
+        a[control[7] & 0xf],
+        a[control[8] & 0xf],
+        a[control[9] & 0xf],
+        a[control[10] & 0xf],
+        a[control[11] & 0xf],
+        a[control[12] & 0xf],
+        a[control[13] & 0xf],
+        a[control[14] & 0xf],
+        a[control[15] & 0xf],
+    };
+}
 }
 
 #pragma GCC diagnostic pop

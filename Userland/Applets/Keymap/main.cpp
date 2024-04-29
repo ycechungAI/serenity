@@ -7,7 +7,7 @@
 #include "KeymapStatusWindow.h"
 #include <LibCore/System.h>
 #include <LibGUI/Application.h>
-#include <LibGUI/ConnectionToWindowMangerServer.h>
+#include <LibGUI/ConnectionToWindowManagerServer.h>
 #include <LibMain/Main.h>
 #include <WindowServer/Window.h>
 
@@ -15,7 +15,7 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
 {
     TRY(Core::System::pledge("stdio recvfd sendfd rpath unix getkeymap proc exec"));
 
-    auto app = TRY(GUI::Application::try_create(arguments));
+    auto app = TRY(GUI::Application::create(arguments));
 
     auto window = TRY(KeymapStatusWindow::try_create());
     window->set_has_alpha_channel(true);

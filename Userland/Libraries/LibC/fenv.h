@@ -9,35 +9,28 @@
 #include <stdint.h>
 #include <sys/cdefs.h>
 
-__BEGIN_DECLS
+#if defined(__x86_64__)
+#    include <arch/x86_64/fenv.h>
+#elif defined(__aarch64__)
 
-struct __x87_floating_point_environment {
-    uint16_t __control_word;
-    uint16_t __reserved1;
-    uint16_t __status_word;
-    uint16_t __reserved2;
-    uint16_t __tag_word;
-    uint16_t __reserved3;
-    uint32_t __fpu_ip_offset;
-    uint16_t __fpu_ip_selector;
-    uint16_t __opcode : 11;
-    uint16_t __reserved4 : 5;
-    uint32_t __fpu_data_offset;
-    uint16_t __fpu_data_selector;
-    uint16_t __reserved5;
-};
-
+// TODO: Implement this.
 typedef struct fenv_t {
-    struct __x87_floating_point_environment __x87_fpu_env;
-    uint32_t __mxcsr;
 } fenv_t;
 
-#define FE_DFL_ENV ((const fenv_t*)-1)
+#elif defined(__riscv) && __riscv_xlen == 64
+#    include <arch/riscv64/fenv.h>
+#else
+#    error "Unknown architecture"
+#endif
+
+__BEGIN_DECLS
+
+#define FE_DFL_ENV ((fenv_t const*)-1)
 
 int fegetenv(fenv_t*);
-int fesetenv(const fenv_t*);
+int fesetenv(fenv_t const*);
 int feholdexcept(fenv_t*);
-int feupdateenv(const fenv_t*);
+int feupdateenv(fenv_t const*);
 
 #define FE_INVALID 1u << 0
 #define FE_DIVBYZERO 1u << 2
@@ -48,7 +41,7 @@ int feupdateenv(const fenv_t*);
 
 typedef uint16_t fexcept_t;
 int fegetexceptflag(fexcept_t*, int exceptions);
-int fesetexceptflag(const fexcept_t*, int exceptions);
+int fesetexceptflag(fexcept_t const*, int exceptions);
 
 int feclearexcept(int exceptions);
 int fetestexcept(int exceptions);
@@ -58,6 +51,8 @@ int feraiseexcept(int exceptions);
 #define FE_DOWNWARD 1
 #define FE_UPWARD 2
 #define FE_TOWARDZERO 3
+// Only exists in RISC-V at the moment; on other architectures this is replaced with FE_TONEAREST.
+#define FE_TOMAXMAGNITUDE 4
 
 int fesetround(int round);
 int fegetround(void);

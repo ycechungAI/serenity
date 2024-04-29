@@ -67,7 +67,11 @@ class Position {
             point = current_point.up(1)
         )
             current_point = point;
-        return R(current_point.name + ":" + up_one.name);
+
+        const sheetName = Object.is(this.sheet, thisSheet)
+            ? ""
+            : `sheet(${JSON.stringify(this.sheet.name)}):`;
+        return R(sheetName + current_point.name + ":" + up_one.name);
     }
 
     range_down() {
@@ -75,7 +79,11 @@ class Position {
         let current_point = down_one;
         for (let point = current_point.down(1); point.value() !== ""; point = current_point.down(1))
             current_point = point;
-        return R(current_point.name + ":" + down_one.name);
+
+        const sheetName = Object.is(this.sheet, thisSheet)
+            ? ""
+            : `sheet(${JSON.stringify(this.sheet.name)}):`;
+        return R(sheetName + current_point.name + ":" + down_one.name);
     }
 
     range_left() {
@@ -88,7 +96,11 @@ class Position {
             point = current_point.left(1)
         )
             current_point = point;
-        return R(current_point.name + ":" + left_one.name);
+
+        const sheetName = Object.is(this.sheet, thisSheet)
+            ? ""
+            : `sheet(${JSON.stringify(this.sheet.name)}):`;
+        return R(sheetName + current_point.name + ":" + left_one.name);
     }
 
     range_right() {
@@ -100,7 +112,11 @@ class Position {
             point = current_point.right(1)
         )
             current_point = point;
-        return R(current_point.name + ":" + right_one.name);
+
+        const sheetName = Object.is(this.sheet, thisSheet)
+            ? ""
+            : `sheet(${JSON.stringify(this.sheet.name)}):`;
+        return R(sheetName + current_point.name + ":" + right_one.name);
     }
 
     with_column(value) {
@@ -124,7 +140,9 @@ class Position {
     }
 
     toString() {
-        return `<Cell at ${this.name}>`;
+        return `<Cell at ${this.name}${
+            Object.is(this.sheet, thisSheet) ? "" : ` in sheet(${JSON.stringify(this.sheet.name)})`
+        }>`;
     }
 }
 
@@ -276,7 +294,15 @@ class Ranges extends CommonRange {
 }
 
 class Range extends CommonRange {
-    constructor(startingColumnName, endingColumnName, startingRow, endingRow, columnStep, rowStep) {
+    constructor(
+        startingColumnName,
+        endingColumnName,
+        startingRow,
+        endingRow,
+        columnStep,
+        rowStep,
+        sheet
+    ) {
         super();
         // using == to account for '0' since js will parse `+'0'` to 0
         if (columnStep == 0 || rowStep == 0)
@@ -292,6 +318,7 @@ class Range extends CommonRange {
         this.columnStep = columnStep ?? 1;
         this.rowStep = rowStep ?? 1;
         this.spansEntireColumn = endingRow === undefined;
+        this.sheet = sheet;
         if (!this.spansEntireColumn && startingRow === undefined)
             throw new Error("A Range with a defined end row must also have a defined start row");
 
@@ -299,32 +326,32 @@ class Range extends CommonRange {
     }
 
     first() {
-        return new Position(this.startingColumnName, this.startingRow);
+        return new Position(this.startingColumnName, this.startingRow, this.sheet);
     }
 
     forEach(callback) {
         const ranges = [];
-        let startingColumnIndex = thisSheet.column_index(this.startingColumnName);
-        let endingColumnIndex = thisSheet.column_index(this.endingColumnName);
+        let startingColumnIndex = this.sheet.column_index(this.startingColumnName);
+        let endingColumnIndex = this.sheet.column_index(this.endingColumnName);
         let columnDistance = endingColumnIndex - startingColumnIndex;
         for (
             let columnOffset = 0;
             columnOffset <= columnDistance;
             columnOffset += this.columnStep
         ) {
-            const columnName = thisSheet.column_arithmetic(this.startingColumnName, columnOffset);
+            const columnName = this.sheet.column_arithmetic(this.startingColumnName, columnOffset);
             ranges.push({
                 column: columnName,
                 rowStart: this.startingRow,
                 rowEnd: this.spansEntireColumn
-                    ? thisSheet.get_column_bound(columnName)
+                    ? this.sheet.get_column_bound(columnName)
                     : this.endingRow,
             });
         }
 
         outer: for (const range of ranges) {
             for (let row = range.rowStart; row <= range.rowEnd; row += this.rowStep) {
-                if (callback(new Position(range.column, row)) === Break) break outer;
+                if (callback(new Position(range.column, row, this.sheet)) === Break) break outer;
             }
         }
     }
@@ -338,8 +365,8 @@ class Range extends CommonRange {
     }
 
     normalize() {
-        const startColumnIndex = thisSheet.column_index(this.startingColumnName);
-        const endColumnIndex = thisSheet.column_index(this.endingColumnName);
+        const startColumnIndex = this.sheet.column_index(this.startingColumnName);
+        const endColumnIndex = this.sheet.column_index(this.endingColumnName);
         if (startColumnIndex > endColumnIndex) {
             const temp = this.startingColumnName;
             this.startingColumnName = this.endingColumnName;
@@ -359,11 +386,15 @@ class Range extends CommonRange {
         const endingRow = this.endingRow ?? "";
         const showSteps = this.rowStep !== 1 || this.columnStep !== 1;
         const steps = showSteps ? `:${this.columnStep}:${this.rowStep}` : "";
-        return `R\`${this.startingColumnName}${this.startingRow}:${this.endingColumnName}${endingRow}${steps}\``;
+        const sheetName = Object.is(thisSheet, this.sheet)
+            ? ""
+            : `sheet(${JSON.stringify(this.sheet.name)}):`;
+        return `R\`${sheetName}${this.startingColumnName}${this.startingRow}:${this.endingColumnName}${endingRow}${steps}\``;
     }
 }
 
-const R_FORMAT = /^([a-zA-Z_]+)(?:(\d+):([a-zA-Z_]+)(\d+)?(?::(\d+):(\d+))?)?$/;
+const R_FORMAT =
+    /^(?:sheet\(("(?:[^"]|\\")*")\):)?([a-zA-Z_]+)(?:(\d+):([a-zA-Z_]+)(\d+)?(?::(\d+):(\d+))?)?$/;
 function R(fmt, ...args) {
     if (args.length !== 0) throw new TypeError("R`` format must be a literal");
     // done because:
@@ -372,11 +403,17 @@ function R(fmt, ...args) {
     // myFunc`ABC` => "["ABC"]"
     if (Array.isArray(fmt)) fmt = fmt[0];
     if (!R_FORMAT.test(fmt))
-        throw new Error("Invalid Format. Expected Format: R`A` or R`A0:A1` or R`A0:A2:1:2`");
-    // Format: Col(Row:Col(Row)?(:ColStep:RowStep)?)?
+        throw new Error(
+            'Invalid Format. Expected Format: R`A` or R`A0:A1` or R`A0:A2:1:2` or R`sheet("sheetName"):...`'
+        );
+    // Format: (sheet("sheetName"):)?Col(Row:Col(Row)?(:ColStep:RowStep)?)?
     // Ignore the first element of the match array as that will be the whole match.
     const [, ...matches] = fmt.match(R_FORMAT);
-    const [startCol, startRow, endCol, endRow, colStep, rowStep] = matches;
+    const [sheetExpression, startCol, startRow, endCol, endRow, colStep, rowStep] = matches;
+    const sheetFromName = name => {
+        if (name == null || name === "") return thisSheet;
+        return sheet(JSON.parse(name));
+    };
     return new Range(
         startCol,
         endCol ?? startCol,
@@ -384,7 +421,8 @@ function R(fmt, ...args) {
         // Don't make undefined an integer, because then it becomes 0.
         !!endRow ? integer(endRow) : endRow,
         integer(colStep ?? 1),
-        integer(rowStep ?? 1)
+        integer(rowStep ?? 1),
+        sheetFromName(sheetExpression)
     );
 }
 
@@ -431,38 +469,45 @@ function numericReduce(op, accumulator, cells) {
 }
 
 function numericResolve(cells) {
-    return resolve(cells).map(val => parseInt(val));
+    return resolve(cells).map(val => parseFloat(val));
 }
 
 function resolve(cells) {
+    if (!(cells instanceof Array)) {
+        cells = [cells];
+    }
+    return cells.map(resolveRange).flat();
+}
+
+function resolveRange(cells) {
     const isRange = cells instanceof CommonRange;
     return isRange ? cells.toArray().map(cell => cell.value()) : cells;
 }
 
 // Statistics
 
-function sum(cells) {
+function sum(...cells) {
     return numericReduce((acc, x) => acc + x, 0, cells);
 }
 
-function sumIf(condition, cells) {
+function sumIf(condition, ...cells) {
     return numericReduce((acc, x) => (condition(x) ? acc + x : acc), 0, cells);
 }
 
-function count(cells) {
+function count(...cells) {
     return reduce((acc, x) => acc + 1, 0, cells);
 }
 
-function countIf(condition, cells) {
+function countIf(condition, ...cells) {
     return reduce((acc, x) => (condition(x) ? acc + 1 : acc), 0, cells);
 }
 
-function average(cells) {
+function average(...cells) {
     const sumAndCount = numericReduce((acc, x) => [acc[0] + x, acc[1] + 1], [0, 0], cells);
     return sumAndCount[0] / sumAndCount[1];
 }
 
-function averageIf(condition, cells) {
+function averageIf(condition, ...cells) {
     const sumAndCount = numericReduce(
         (acc, x) => (condition(x) ? [acc[0] + x, acc[1] + 1] : acc),
         [0, 0],
@@ -471,20 +516,20 @@ function averageIf(condition, cells) {
     return sumAndCount[0] / sumAndCount[1];
 }
 
-function maxIf(condition, cells) {
+function maxIf(condition, ...cells) {
     return Math.max(...numericResolve(cells).filter(condition));
 }
 
-function max(cells) {
-    return maxIf(() => true, cells);
+function max(...cells) {
+    return maxIf(() => true, ...cells);
 }
 
-function minIf(condition, cells) {
+function minIf(condition, ...cells) {
     return Math.min(...numericResolve(cells).filter(condition));
 }
 
-function min(cells) {
-    return minIf(() => true, cells);
+function min(...cells) {
+    return minIf(() => true, ...cells);
 }
 
 function sumProductIf(condition, rangeOne, rangeTwo) {
@@ -501,7 +546,7 @@ function sumProduct(rangeOne, rangeTwo) {
     return sumProductIf(() => true, rangeOne, rangeTwo);
 }
 
-function median(cells) {
+function median(...cells) {
     const values = numericResolve(cells);
 
     if (values.length === 0) return 0;
@@ -526,7 +571,7 @@ function median(cells) {
     return (qselect(values, values.length / 2) + qselect(values, values.length / 2 - 1)) / 2;
 }
 
-function variance(cells) {
+function variance(...cells) {
     const sumsAndSquaresAndCount = numericReduce(
         (acc, x) => [acc[0] + x, acc[1] + x * x, acc[2] + 1],
         [0, 0, 0],
@@ -539,7 +584,7 @@ function variance(cells) {
     return (count * squares - sums * sums) / count;
 }
 
-function mode(cells) {
+function mode(...cells) {
     const counts = numericReduce(
         (map, x) => {
             if (!map.has(x)) map.set(x, 0);
@@ -562,8 +607,8 @@ function mode(cells) {
     return mostCommonValue;
 }
 
-function stddev(cells) {
-    return Math.sqrt(variance(cells));
+function stddev(...cells) {
+    return Math.sqrt(variance(...cells));
 }
 
 // Lookup
@@ -590,6 +635,12 @@ function internal_lookup(
     reference
 ) {
     if_missing = if_missing ?? undefined;
+    const missing = () => {
+        if (if_missing !== undefined) return if_missing;
+
+        throw new Error(`Failed to find ${req_lookup_value} in ${lookup_inputs}`);
+    };
+
     mode = mode ?? "exact";
     const lookup_value = req_lookup_value;
     let matches = null;
@@ -616,7 +667,7 @@ function internal_lookup(
         ++i;
     });
 
-    if (found_input == null) return if_missing;
+    if (found_input == null) return missing();
 
     if (lookup_outputs === undefined) {
         if (reference) return found_input;
@@ -646,14 +697,7 @@ function lookup(req_lookup_value, lookup_inputs, lookup_outputs, if_missing, mod
 }
 
 function reflookup(req_lookup_value, lookup_inputs, lookup_outputs, if_missing, mode) {
-    return internal_lookup(
-        req_lookup_value,
-        lookup_inputs,
-        lookup_outputs,
-        if_missing ?? here(),
-        mode,
-        true
-    );
+    return internal_lookup(req_lookup_value, lookup_inputs, lookup_outputs, if_missing, mode, true);
 }
 
 // Cheat the system and add documentation
@@ -786,19 +830,20 @@ numericReduce.__documentation = JSON.stringify({
 sum.__documentation = JSON.stringify({
     name: "sum",
     argc: 1,
-    argnames: ["cell names"],
-    doc: "Calculates the sum of the values in `cells`",
+    argnames: ["numbers or cell names"],
+    doc: "Calculates the total of the numbers or cell values in `numbers or cell names`",
     examples: {
         "sum(R`A0:C3`)":
             "Calculate the sum of the values in A0:C3, [Click to view](spreadsheet://example/variance#simple)",
+        "sum(1, 2, 3)": "Calculate the sum of 1, 2, and 3 (Sum = 6)",
     },
 });
 
 sumIf.__documentation = JSON.stringify({
     name: "sumIf",
     argc: 2,
-    argnames: ["condition", "cell names"],
-    doc: "Calculates the sum of cells the value of which evaluates to true when passed to `condition`",
+    argnames: ["condition", "numbers or cell names"],
+    doc: "Calculates the sum of all numbers or cell values which evaluate to true when passed to `condition`",
     examples: {
         "sumIf(x => x instanceof Number, R`A1:C4`)":
             "Calculates the sum of all numbers within A1:C4",
@@ -808,8 +853,8 @@ sumIf.__documentation = JSON.stringify({
 count.__documentation = JSON.stringify({
     name: "count",
     argc: 1,
-    argnames: ["cell names"],
-    doc: "Counts the number of cells in the given range",
+    argnames: ["numbers or cell names"],
+    doc: "Counts the number of inputs or cells in a given range",
     examples: {
         "count(R`A0:C3`)":
             "Count the number of cells in A0:C3, [Click to view](spreadsheet://example/variance#simple)",
@@ -819,8 +864,8 @@ count.__documentation = JSON.stringify({
 countIf.__documentation = JSON.stringify({
     name: "countIf",
     argc: 2,
-    argnames: ["condition", "cell names"],
-    doc: "Counts cells the value of which evaluates to true when passed to `condition`",
+    argnames: ["condition", "numbers or cell names"],
+    doc: "Counts inputs or cell values which evaluate to true when passed to `condition`",
     examples: {
         "countIf(x => x instanceof Number, R`A1:C3`)":
             "Count the number of cells which have numbers within A1:C3",
@@ -830,40 +875,42 @@ countIf.__documentation = JSON.stringify({
 average.__documentation = JSON.stringify({
     name: "average",
     argc: 1,
-    argnames: ["cell names"],
-    doc: "Calculates the average of the values in `cells`",
+    argnames: ["numbers or cell names"],
+    doc: "Calculates the average of the numbers or cell values in `numbers or cell names`",
     examples: {
         "average(R`A0:C3`)":
             "Calculate the average of the values in A0:C3, [Click to view](spreadsheet://example/variance#simple)",
+        "average(4, 6)": "Calculate the average of 4 and 6 (Average = 5)",
     },
 });
 
 averageIf.__documentation = JSON.stringify({
     name: "averageIf",
     argc: 2,
-    argnames: ["condition", "cell names"],
-    doc: "Calculates the average of cells the value of which evaluates to true when passed to `condition`",
+    argnames: ["condition", "numbers or cell names"],
+    doc: "Calculates the average of all numbers or cell values which evaluate to true when passed to `condition`",
     examples: {
         "averageIf(x => x > 4, R`A1:C4`)":
-            "Calculate the sum of all numbers larger then 4 within A1:C4",
+            "Calculate the average of all numbers larger then 4 within A1:C4",
     },
 });
 
 max.__documentation = JSON.stringify({
     name: "max",
     argc: 1,
-    argnames: ["the range"],
-    doc: "Gets the largest cell's value in the range",
+    argnames: ["numbers or cell names"],
+    doc: "Calculates the largest number or cell value in `numbers or cell names`",
     examples: {
         "max(R`A1:C4`)": "Finds the largest number within A1:C4",
+        "max(1, 2, 3)": "Returns the largest of 1, 2, and 3 (Max = 3)",
     },
 });
 
 maxIf.__documentation = JSON.stringify({
-    name: "max",
+    name: "maxIf",
     argc: 1,
-    argnames: ["condition", "the range"],
-    doc: "Gets the largest cell's value in the range which evaluates to true when passed to `condition`",
+    argnames: ["condition", "numbers or cell names"],
+    doc: "Calculates the largest of all numbers or cell values which evaluate to true when passed to `condition`",
     examples: {
         "maxIf(x => x > 4, R`A1:C4`)":
             "Finds the largest number within A1:C4 that is greater than 4",
@@ -873,18 +920,19 @@ maxIf.__documentation = JSON.stringify({
 min.__documentation = JSON.stringify({
     name: "min",
     argc: 1,
-    argnames: ["the range"],
-    doc: "Gets the smallest cell's value in the range",
+    argnames: ["numbers or cell names"],
+    doc: "Calculates the smallest number or cell value in `numbers or cell names`",
     examples: {
         "min(R`A1:C4`)": "Finds the smallest number within A1:C4",
+        "min(1, 2, 3)": "Returns the smallest of 1, 2, and 3 (Min = 1)",
     },
 });
 
 minIf.__documentation = JSON.stringify({
-    name: "min",
+    name: "minIf",
     argc: 1,
-    argnames: ["condition", "the range"],
-    doc: "Gets the smallest cell's value in the range which evaluates to true when passed to `condition`",
+    argnames: ["condition", "numbers or cell names"],
+    doc: "Calculates the smallest of all numbers or cell values which evaluate to true when passed to `condition`",
     examples: {
         "minIf(x => x > 4, R`A1:C4`)":
             "Finds the smallest number within A1:C4 that is greater than 4",
@@ -960,19 +1008,20 @@ sumProductIf.__documentation = JSON.stringify({
 median.__documentation = JSON.stringify({
     name: "median",
     argc: 1,
-    argnames: ["cell names"],
-    doc: "Calculates the median of the numeric values in the given range of cells",
+    argnames: ["numbers or cell names"],
+    doc: "Calculates the median number or cell value in `numbers or cell names`",
     examples: {
         "median(R`A0:C3`)":
             "Calculate the median of the values in A0:C3, [Click to view](spreadsheet://example/variance#simple)",
+        "median(1, 2, 5)": "Calculate the median of 1, 2, and 5 (Median = 2)",
     },
 });
 
 variance.__documentation = JSON.stringify({
     name: "variance",
     argc: 1,
-    argnames: ["cell names"],
-    doc: "Calculates the variance of the numeric values in the given range of cells",
+    argnames: ["numbers or cell names"],
+    doc: "Calculates the variance of the numbers or cell values in `numbers or cell names`",
     examples: {
         "variance(R`A0:C3`)":
             "Calculate the variance of the values in A0:C3, [Click to view](spreadsheet://example/variance#simple)",
@@ -1076,11 +1125,12 @@ variance.__documentation = JSON.stringify({
 mode.__documentation = JSON.stringify({
     name: "mode",
     argc: 1,
-    argnames: ["cell names"],
-    doc: "Calculates the mode of the numeric values in the given range of cells, i.e. the value that appears most often",
+    argnames: ["numbers or cell names"],
+    doc: "Calculates the mode (most common value) of the numbers or cell values in `numbers or cell names`",
     examples: {
         "mode(R`A2:A14`)":
             "Calculate the mode of the values in A2:A14, [Click to view](spreadsheet://example/variance#simple)",
+        "mode(1, 2, 2)": "Calculate the mode of 1, 2, and 2 (Mode = 2)",
     },
 });
 
@@ -1088,7 +1138,7 @@ stddev.__documentation = JSON.stringify({
     name: "stddev",
     argc: 1,
     argnames: ["cell names"],
-    doc: "Calculates the standard deviation of the numeric values in the given range of cells",
+    doc: "Calculates the standard deviation (square root of variance) of the numbers or cell values in `numbers or cell names`",
     examples: {
         "stddev(R`A0:C3`)":
             "Calculate the standard deviation of the values in A0:C3, [Click to view](spreadsheet://example/variance#simple)",
@@ -1172,8 +1222,8 @@ lookup.__documentation = JSON.stringify({
         "Allows for finding things in a table or tabular data, by looking for matches in one range, and " +
         "grabbing the corresponding output value from another range.\n" +
         "if `lookup target` is not specified or is nullish, it is assumed to be the same as the `lookup source`\n." +
-        "if nothing matches, the value `value if no match`" +
-        " is returned, which is `undefined` by default.\nBy setting the `match method`, the function can be altered to return " +
+        "if nothing matches, either the value `value if no match` (if not `undefined`) is returned, or " +
+        "an error is thrown.\nBy setting the `match method`, the function can be altered to return " +
         "the closest ordered value (above or below) instead of an exact match. The valid choices for `match method` are:\n" +
         "- `'exact'`: The default method. Uses strict equality to match values.\n" +
         "- `'nextlargest'`: Uses the greater-or-equal operator to match values.\n" +
@@ -1200,8 +1250,8 @@ reflookup.__documentation = JSON.stringify({
         "Allows for finding references to things in a table or tabular data, by looking for matches in one range, and " +
         "grabbing the corresponding output value from another range.\n" +
         "if `lookup target` is not specified or is nullish, it is assumed to be the same as the `lookup source`\n." +
-        "if nothing matches, the value `value if no match`" +
-        " is returned, which is `undefined` by default.\nBy setting the `match method`, the function can be altered to return " +
+        "if nothing matches, either the value `value if no match` (if not `undefined`) is returned, or " +
+        "an error is thrown.\nBy setting the `match method`, the function can be altered to return " +
         "the closest ordered value (above or below) instead of an exact match. The valid choices for `match method` are:\n" +
         "- `'exact'`: The default method. Uses strict equality to match values.\n" +
         "- `'nextlargest'`: Uses the greater-or-equal operator to match values.\n" +

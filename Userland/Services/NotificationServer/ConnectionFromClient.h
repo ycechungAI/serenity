@@ -7,11 +7,9 @@
 #pragma once
 
 #include <LibIPC/ConnectionFromClient.h>
-#include <WindowServer/ScreenLayout.h>
-
-// Must be included after WindowServer/ScreenLayout.h
 #include <NotificationServer/NotificationClientEndpoint.h>
 #include <NotificationServer/NotificationServerEndpoint.h>
+#include <WindowServer/ScreenLayout.h>
 
 namespace NotificationServer {
 
@@ -23,7 +21,7 @@ public:
     virtual void die() override;
 
 private:
-    explicit ConnectionFromClient(NonnullOwnPtr<Core::Stream::LocalSocket>, int client_id);
+    explicit ConnectionFromClient(NonnullOwnPtr<Core::LocalSocket>, int client_id);
 
     virtual void show_notification(String const&, String const&, Gfx::ShareableBitmap const&) override;
     virtual void close_notification() override;

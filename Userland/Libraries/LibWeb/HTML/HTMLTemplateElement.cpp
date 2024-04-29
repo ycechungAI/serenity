@@ -4,44 +4,45 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/Bindings/HTMLTemplateElementPrototype.h>
+#include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/HTML/HTMLTemplateElement.h>
 
 namespace Web::HTML {
 
+JS_DEFINE_ALLOCATOR(HTMLTemplateElement);
+
 HTMLTemplateElement::HTMLTemplateElement(DOM::Document& document, DOM::QualifiedName qualified_name)
     : HTMLElement(document, move(qualified_name))
 {
-    m_content = adopt_ref(*new DOM::DocumentFragment(appropriate_template_contents_owner_document(document)));
-    m_content->set_host(this);
 }
 
 HTMLTemplateElement::~HTMLTemplateElement() = default;
 
-DOM::Document& HTMLTemplateElement::appropriate_template_contents_owner_document(DOM::Document& document)
+void HTMLTemplateElement::initialize(JS::Realm& realm)
 {
-    if (!document.created_for_appropriate_template_contents()) {
-        if (!document.associated_inert_template_document()) {
-            auto new_document = DOM::Document::create();
-            new_document->set_created_for_appropriate_template_contents(true);
+    Base::initialize(realm);
+    WEB_SET_PROTOTYPE_FOR_INTERFACE(HTMLTemplateElement);
 
-            // FIXME: If doc is an HTML document, mark new doc as an HTML document also.
+    m_content = heap().allocate<DOM::DocumentFragment>(realm, m_document->appropriate_template_contents_owner_document());
+    m_content->set_host(this);
+}
 
-            document.set_associated_inert_template_document(new_document);
-        }
-
-        return *document.associated_inert_template_document();
-    }
-
-    return document;
+void HTMLTemplateElement::visit_edges(Cell::Visitor& visitor)
+{
+    Base::visit_edges(visitor);
+    visitor.visit(m_content);
 }
 
 // https://html.spec.whatwg.org/multipage/scripting.html#the-template-element:concept-node-adopt-ext
 void HTMLTemplateElement::adopted_from(DOM::Document&)
 {
-    // NOTE: It seems the spec has been changed since appropriate_template_contents_owner_document was written above.
-    //       That function is now part of document, which ends up returning associated_inert_template_document in the new version anyway.
-    appropriate_template_contents_owner_document(document()).adopt_node(content());
+    // 1. Let doc be node's node document's appropriate template contents owner document.
+    auto doc = document().appropriate_template_contents_owner_document();
+
+    // 2. Adopt node's template contents (a DocumentFragment object) into doc.
+    doc->adopt_node(content());
 }
 
 // https://html.spec.whatwg.org/multipage/scripting.html#the-template-element:concept-node-clone-ext
@@ -56,7 +57,7 @@ void HTMLTemplateElement::cloned(Node& copy, bool clone_children)
         auto cloned_child = child.clone_node(&template_clone.content()->document(), true);
 
         // FIXME: Should this use TreeNode::append_child instead?
-        template_clone.content()->append_child(cloned_child);
+        MUST(template_clone.content()->append_child(cloned_child));
     });
 }
 

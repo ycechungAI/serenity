@@ -8,8 +8,6 @@
 
 #include "Forward.h"
 #include <AK/Forward.h>
-#include <AK/NonnullRefPtrVector.h>
-#include <AK/String.h>
 #include <AK/Vector.h>
 #include <LibCore/ElapsedTimer.h>
 
@@ -29,7 +27,7 @@ private:
 
 class SavedFileDescriptors {
 public:
-    SavedFileDescriptors(const NonnullRefPtrVector<AST::Rewiring>&);
+    SavedFileDescriptors(Vector<NonnullRefPtr<AST::Rewiring>> const&);
     ~SavedFileDescriptors();
 
 private:

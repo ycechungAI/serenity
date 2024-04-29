@@ -8,6 +8,7 @@
 #pragma once
 
 #include <AK/Types.h>
+#include <LibAudio/Queue.h>
 #include <LibGfx/Color.h>
 
 namespace Music {
@@ -18,25 +19,12 @@ namespace Music {
 // - 44,100 samples/sec
 // - 1,411.2 kbps
 
-struct Sample {
-    i16 left;
-    i16 right;
-};
-
-// HACK: needs to increase with device sample rate, but all of the sample_count stuff is static for now
-constexpr int sample_count = 1 << 12;
-
-constexpr int buffer_size = sample_count * sizeof(Sample);
+constexpr int sample_count = Audio::AUDIO_BUFFER_SIZE * 10;
 
 constexpr double sample_rate = 44100;
 
 // Headroom for the synth
 constexpr double volume_factor = 0.8;
-
-enum Switch {
-    Off,
-    On,
-};
 
 enum Direction {
     Down,
@@ -63,10 +51,10 @@ constexpr KeyColor key_pattern[] = {
     White,
 };
 
-const Color note_pressed_color(64, 64, 255);
-const Color column_playing_color(128, 128, 255);
+Color const note_pressed_color(64, 64, 255);
+Color const column_playing_color(128, 128, 255);
 
-const Color left_wave_colors[] = {
+Color const left_wave_colors[] = {
     // Sine
     {
         255,
@@ -108,7 +96,7 @@ const Color left_wave_colors[] = {
 // HACK: make the display code shut up for now
 constexpr int RecordedSample = 5;
 
-const Color right_wave_colors[] = {
+Color const right_wave_colors[] = {
     // Sine
     {
         255,
@@ -160,19 +148,19 @@ constexpr int beats_per_bar = 4;
 constexpr int notes_per_beat = 4;
 constexpr int roll_length = (sample_rate / (beats_per_minute / 60)) * beats_per_bar;
 
-constexpr const char* note_names[] = {
-    "C",
-    "C#",
-    "D",
-    "D#",
-    "E",
-    "F",
-    "F#",
-    "G",
-    "G#",
-    "A",
-    "A#",
-    "B",
+constexpr StringView note_names[] = {
+    "C"sv,
+    "C#"sv,
+    "D"sv,
+    "D#"sv,
+    "E"sv,
+    "F"sv,
+    "F#"sv,
+    "G"sv,
+    "G#"sv,
+    "A"sv,
+    "A#"sv,
+    "B"sv,
 };
 
 // Equal temperament, A = 440Hz

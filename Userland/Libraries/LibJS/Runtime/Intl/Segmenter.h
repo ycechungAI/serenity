@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2022, Idan Horowitz <idan.horowitz@serenityos.org>
+ * Copyright (c) 2023, Tim Flynn <trflynn89@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,6 +14,7 @@ namespace JS::Intl {
 
 class Segmenter final : public Object {
     JS_OBJECT(Segmenter, Object);
+    JS_DECLARE_ALLOCATOR(Segmenter);
 
 public:
     enum class SegmenterGranularity {
@@ -21,7 +23,6 @@ public:
         Sentence,
     };
 
-    explicit Segmenter(Object& prototype);
     virtual ~Segmenter() override = default;
 
     String const& locale() const { return m_locale; }
@@ -32,15 +33,18 @@ public:
     StringView segmenter_granularity_string() const;
 
 private:
+    explicit Segmenter(Object& prototype);
+
     String m_locale;                                                                 // [[Locale]]
     SegmenterGranularity m_segmenter_granularity { SegmenterGranularity::Grapheme }; // [[SegmenterGranularity]]
 };
 
-Object* create_segment_data_object(GlobalObject&, Segmenter const&, Utf16View const&, double start_index, double end_index);
+ThrowCompletionOr<NonnullGCPtr<Object>> create_segment_data_object(VM&, Segmenter const&, Utf16View const&, double start_index, double end_index);
+
 enum class Direction {
     Before,
     After,
 };
-double find_boundary(Segmenter const&, Utf16View const&, double start_index, Direction, Optional<Vector<size_t>>& boundaries_cache);
+double find_boundary(Segmenter const&, Utf16View const&, double start_index, Direction);
 
 }

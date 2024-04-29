@@ -23,8 +23,8 @@ void ASTNode::dump(FILE* output, size_t indent) const
 void TranslationUnit::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
-    for (const auto& child : m_declarations) {
-        child.dump(output, indent + 1);
+    for (auto const& child : m_declarations) {
+        child->dump(output, indent + 1);
     }
 }
 
@@ -32,10 +32,10 @@ void FunctionDeclaration::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
 
-    String qualifiers_string;
+    ByteString qualifiers_string;
     if (!m_qualifiers.is_empty()) {
         print_indent(output, indent + 1);
-        outln(output, "[{}]", String::join(" ", m_qualifiers));
+        outln(output, "[{}]", ByteString::join(' ', m_qualifiers));
     }
 
     m_return_type->dump(output, indent + 1);
@@ -45,8 +45,8 @@ void FunctionDeclaration::dump(FILE* output, size_t indent) const
     }
     print_indent(output, indent + 1);
     outln(output, "(");
-    for (const auto& arg : m_parameters) {
-        arg.dump(output, indent + 1);
+    for (auto const& arg : m_parameters) {
+        arg->dump(output, indent + 1);
     }
     print_indent(output, indent + 1);
     outln(output, ")");
@@ -55,9 +55,9 @@ void FunctionDeclaration::dump(FILE* output, size_t indent) const
     }
 }
 
-NonnullRefPtrVector<Declaration> FunctionDeclaration::declarations() const
+Vector<NonnullRefPtr<Declaration const>> FunctionDeclaration::declarations() const
 {
-    NonnullRefPtrVector<Declaration> declarations;
+    Vector<NonnullRefPtr<Declaration const>> declarations;
     for (auto& arg : m_parameters) {
         declarations.append(arg);
     }
@@ -72,67 +72,67 @@ void Type::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
     print_indent(output, indent + 1);
-    outln(output, "{}", to_string());
+    outln(output, "{}", to_byte_string());
 }
 
-String NamedType::to_string() const
+ByteString NamedType::to_byte_string() const
 {
-    String qualifiers_string;
+    ByteString qualifiers_string;
     if (!qualifiers().is_empty())
-        qualifiers_string = String::formatted("[{}] ", String::join(" ", qualifiers()));
+        qualifiers_string = ByteString::formatted("[{}] ", ByteString::join(' ', qualifiers()));
 
-    String name;
+    ByteString name;
     if (is_auto())
         name = "auto";
     else
-        name = m_name.is_null() ? "" : m_name->full_name();
+        name = m_name.is_null() ? ""sv : m_name->full_name();
 
-    return String::formatted("{}{}", qualifiers_string, name);
+    return ByteString::formatted("{}{}", qualifiers_string, name);
 }
 
-String Pointer::to_string() const
+ByteString Pointer::to_byte_string() const
 {
     if (!m_pointee)
         return {};
     StringBuilder builder;
-    builder.append(m_pointee->to_string());
-    builder.append("*");
-    return builder.to_string();
+    builder.append(m_pointee->to_byte_string());
+    builder.append('*');
+    return builder.to_byte_string();
 }
 
-String Reference::to_string() const
+ByteString Reference::to_byte_string() const
 {
     if (!m_referenced_type)
         return {};
     StringBuilder builder;
-    builder.append(m_referenced_type->to_string());
+    builder.append(m_referenced_type->to_byte_string());
     if (m_kind == Kind::Lvalue)
-        builder.append("&");
+        builder.append('&');
     else
-        builder.append("&&");
-    return builder.to_string();
+        builder.append("&&"sv);
+    return builder.to_byte_string();
 }
 
-String FunctionType::to_string() const
+ByteString FunctionType::to_byte_string() const
 {
     StringBuilder builder;
-    builder.append(m_return_type->to_string());
-    builder.append("(");
+    builder.append(m_return_type->to_byte_string());
+    builder.append('(');
     bool first = true;
     for (auto& parameter : m_parameters) {
         if (first)
             first = false;
         else
-            builder.append(", ");
-        if (parameter.type())
-            builder.append(parameter.type()->to_string());
-        if (parameter.name() && !parameter.full_name().is_empty()) {
-            builder.append(" ");
-            builder.append(parameter.full_name());
+            builder.append(", "sv);
+        if (parameter->type())
+            builder.append(parameter->type()->to_byte_string());
+        if (parameter->name() && !parameter->full_name().is_empty()) {
+            builder.append(' ');
+            builder.append(parameter->full_name());
         }
     }
-    builder.append(")");
-    return builder.to_string();
+    builder.append(')');
+    return builder.to_byte_string();
 }
 
 void Parameter::dump(FILE* output, size_t indent) const
@@ -155,18 +155,18 @@ void FunctionDefinition::dump(FILE* output, size_t indent) const
     ASTNode::dump(output, indent);
     print_indent(output, indent);
     outln(output, "{{");
-    for (const auto& statement : m_statements) {
-        statement.dump(output, indent + 1);
+    for (auto const& statement : m_statements) {
+        statement->dump(output, indent + 1);
     }
     print_indent(output, indent);
     outln(output, "}}");
 }
 
-NonnullRefPtrVector<Declaration> FunctionDefinition::declarations() const
+Vector<NonnullRefPtr<Declaration const>> FunctionDefinition::declarations() const
 {
-    NonnullRefPtrVector<Declaration> declarations;
+    Vector<NonnullRefPtr<Declaration const>> declarations;
     for (auto& statement : m_statements) {
-        declarations.extend(statement.declarations());
+        declarations.extend(statement->declarations());
     }
     return declarations;
 }
@@ -200,7 +200,7 @@ void BinaryExpression::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
 
-    const char* op_string = nullptr;
+    char const* op_string = nullptr;
     switch (m_op) {
     case BinaryOp::Addition:
         op_string = "+";
@@ -272,7 +272,7 @@ void AssignmentExpression::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
 
-    const char* op_string = nullptr;
+    char const* op_string = nullptr;
     switch (m_op) {
     case AssignmentOp::Assignment:
         op_string = "=";
@@ -296,8 +296,8 @@ void FunctionCall::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
     m_callee->dump(output, indent + 1);
-    for (const auto& arg : m_arguments) {
-        arg.dump(output, indent + 1);
+    for (auto const& arg : m_arguments) {
+        arg->dump(output, indent + 1);
     }
 }
 
@@ -333,13 +333,26 @@ void StructOrClassDeclaration::dump(FILE* output, size_t indent) const
     ASTNode::dump(output, indent);
     print_indent(output, indent);
     outln(output, "{}", full_name());
+    if (!m_baseclasses.is_empty()) {
+        print_indent(output, indent + 1);
+        outln(output, ":");
+        for (size_t i = 0; i < m_baseclasses.size(); ++i) {
+            auto& baseclass = m_baseclasses[i];
+            baseclass->dump(output, indent + 1);
+            if (i < m_baseclasses.size() - 1) {
+                print_indent(output, indent + 1);
+                outln(output, ",");
+            }
+        }
+    }
+    outln(output, "");
     for (auto& member : m_members) {
-        member.dump(output, indent + 1);
+        member->dump(output, indent + 1);
     }
 }
-NonnullRefPtrVector<Declaration> StructOrClassDeclaration::declarations() const
+Vector<NonnullRefPtr<Declaration const>> StructOrClassDeclaration::declarations() const
 {
-    NonnullRefPtrVector<Declaration> declarations;
+    Vector<NonnullRefPtr<Declaration const>> declarations;
     for (auto& member : m_members)
         declarations.append(member);
     return declarations;
@@ -349,7 +362,7 @@ void UnaryExpression::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
 
-    const char* op_string = nullptr;
+    char const* op_string = nullptr;
     switch (m_op) {
     case UnaryOp::BitwiseNot:
         op_string = "~";
@@ -412,7 +425,7 @@ void FunctionType::dump(FILE* output, size_t indent) const
     print_indent(output, indent + 1);
     outln("(");
     for (auto& parameter : m_parameters)
-        parameter.dump(output, indent + 2);
+        parameter->dump(output, indent + 2);
     print_indent(output, indent + 1);
     outln(")");
 }
@@ -428,7 +441,7 @@ void BlockStatement::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
     for (auto& statement : m_statements) {
-        statement.dump(output, indent + 1);
+        statement->dump(output, indent + 1);
     }
 }
 
@@ -445,20 +458,20 @@ void ForStatement::dump(FILE* output, size_t indent) const
         m_body->dump(output, indent + 1);
 }
 
-NonnullRefPtrVector<Declaration> Statement::declarations() const
+Vector<NonnullRefPtr<Declaration const>> Statement::declarations() const
 {
     if (is_declaration()) {
-        NonnullRefPtrVector<Declaration> vec;
-        const auto& decl = static_cast<const Declaration&>(*this);
+        Vector<NonnullRefPtr<Declaration const>> vec;
+        auto const& decl = static_cast<Declaration const&>(*this);
         vec.empend(const_cast<Declaration&>(decl));
         return vec;
     }
     return {};
 }
 
-NonnullRefPtrVector<Declaration> ForStatement::declarations() const
+Vector<NonnullRefPtr<Declaration const>> ForStatement::declarations() const
 {
-    NonnullRefPtrVector<Declaration> declarations;
+    Vector<NonnullRefPtr<Declaration const>> declarations;
     if (m_init)
         declarations.extend(m_init->declarations());
     if (m_body)
@@ -466,11 +479,11 @@ NonnullRefPtrVector<Declaration> ForStatement::declarations() const
     return declarations;
 }
 
-NonnullRefPtrVector<Declaration> BlockStatement::declarations() const
+Vector<NonnullRefPtr<Declaration const>> BlockStatement::declarations() const
 {
-    NonnullRefPtrVector<Declaration> declarations;
+    Vector<NonnullRefPtr<Declaration const>> declarations;
     for (auto& statement : m_statements) {
-        declarations.extend(statement.declarations());
+        declarations.extend(statement->declarations());
     }
     return declarations;
 }
@@ -495,9 +508,9 @@ void IfStatement::dump(FILE* output, size_t indent) const
     }
 }
 
-NonnullRefPtrVector<Declaration> IfStatement::declarations() const
+Vector<NonnullRefPtr<Declaration const>> IfStatement::declarations() const
 {
-    NonnullRefPtrVector<Declaration> declarations;
+    Vector<NonnullRefPtr<Declaration const>> declarations;
     if (m_predicate)
         declarations.extend(m_predicate->declarations());
     if (m_then)
@@ -513,7 +526,7 @@ void NamespaceDeclaration::dump(FILE* output, size_t indent) const
     print_indent(output, indent + 1);
     outln(output, "{}", full_name());
     for (auto& decl : m_declarations)
-        decl.dump(output, indent + 1);
+        decl->dump(output, indent + 1);
 }
 
 void NullPointerLiteral::dump(FILE* output, size_t indent) const
@@ -536,10 +549,10 @@ StringView Name::full_name() const
     StringBuilder builder;
     if (!m_scope.is_empty()) {
         for (auto& scope : m_scope) {
-            builder.appendff("{}::", scope.name());
+            builder.appendff("{}::", scope->name());
         }
     }
-    m_full_name = String::formatted("{}{}", builder.to_string(), m_name.is_null() ? "" : m_name->name());
+    m_full_name = ByteString::formatted("{}{}", builder.to_byte_string(), m_name.is_null() ? ""sv : m_name->name());
     return *m_full_name;
 }
 
@@ -552,11 +565,29 @@ StringView TemplatizedName::full_name() const
     name.append(Name::full_name());
     name.append('<');
     for (auto& type : m_template_arguments) {
-        name.append(type.to_string());
+        name.append(type->to_byte_string());
     }
     name.append('>');
-    m_full_name = name.to_string();
+    m_full_name = name.to_byte_string();
     return *m_full_name;
+}
+
+void SizedName::dump(FILE* output, size_t indent) const
+{
+    Name::dump(output, indent);
+    print_indent(output, indent + 1);
+
+    StringBuilder dimension_info;
+    for (auto const& dim : m_dimensions) {
+        dimension_info.append('[');
+        dimension_info.append(dim);
+        dimension_info.append(']');
+    }
+
+    if (dimension_info.is_empty()) {
+        dimension_info.append("[]"sv);
+    }
+    outln(output, "{}", dimension_info.to_byte_string());
 }
 
 void CppCastExpression::dump(FILE* output, size_t indent) const
@@ -588,7 +619,7 @@ void BracedInitList::dump(FILE* output, size_t indent) const
 {
     ASTNode::dump(output, indent);
     for (auto& exp : m_expressions) {
-        exp.dump(output, indent + 1);
+        exp->dump(output, indent + 1);
     }
 }
 
@@ -607,8 +638,8 @@ void Constructor::dump(FILE* output, size_t indent) const
     outln(output, "C'tor");
     print_indent(output, indent + 1);
     outln(output, "(");
-    for (const auto& arg : parameters()) {
-        arg.dump(output, indent + 1);
+    for (auto const& arg : parameters()) {
+        arg->dump(output, indent + 1);
     }
     print_indent(output, indent + 1);
     outln(output, ")");
@@ -623,8 +654,8 @@ void Destructor::dump(FILE* output, size_t indent) const
     outln(output, "D'tor");
     print_indent(output, indent + 1);
     outln(output, "(");
-    for (const auto& arg : parameters()) {
-        arg.dump(output, indent + 1);
+    for (auto const& arg : parameters()) {
+        arg->dump(output, indent + 1);
     }
     print_indent(output, indent + 1);
     outln(output, ")");
@@ -639,10 +670,26 @@ StringView Declaration::full_name() const
         if (m_name)
             m_full_name = m_name->full_name();
         else
-            m_full_name = String::empty();
+            m_full_name = ByteString::empty();
     }
 
     return *m_full_name;
+}
+
+void UsingNamespaceDeclaration::dump(FILE* output, size_t indent) const
+{
+    ASTNode::dump(output, indent);
+    print_indent(output, indent + 1);
+    outln(output, "{}", full_name());
+}
+
+void TypedefDeclaration::dump(FILE* output, size_t indent) const
+{
+    ASTNode::dump(output, indent);
+    print_indent(output, indent + 1);
+    outln(output, "{}", full_name());
+    if (m_alias)
+        m_alias->dump(output, indent + 1);
 }
 
 }

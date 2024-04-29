@@ -4,17 +4,18 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Atomic.h>
 #include <AK/DateConstants.h>
-#include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Time.h>
 #include <Kernel/API/TimePage.h>
 #include <LibTimeZone/TimeZone.h>
 #include <assert.h>
+#include <bits/pthread_cancel.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 #include <sys/times.h>
@@ -23,6 +24,16 @@
 #include <utime.h>
 
 extern "C" {
+
+static constexpr char const* __utc = "UTC";
+static StringView __tzname { __utc, __builtin_strlen(__utc) };
+static char __tzname_standard[TZNAME_MAX];
+static char __tzname_daylight[TZNAME_MAX];
+
+long timezone = 0;
+long altzone = 0;
+char* tzname[2] = { const_cast<char*>(__utc), const_cast<char*>(__utc) };
+int daylight = 0;
 
 time_t time(time_t* tloc)
 {
@@ -68,31 +79,74 @@ int settimeofday(struct timeval* __restrict__ tv, void* __restrict__)
     return clock_settime(CLOCK_REALTIME, &ts);
 }
 
-int utimes(const char* pathname, const struct timeval times[2])
+int utimes(char const* pathname, struct timeval const times[2])
 {
-    if (!times) {
+    if (!times)
         return utime(pathname, nullptr);
-    }
     // FIXME: implement support for tv_usec in the utime (or a new) syscall
     utimbuf buf = { times[0].tv_sec, times[1].tv_sec };
     return utime(pathname, &buf);
 }
 
-char* ctime(const time_t* t)
+// Not in POSIX, originated in BSD but also supported on Linux.
+// https://man.netbsd.org/NetBSD-6.0/lutimes.2
+int lutimes(char const* pathname, struct timeval const times[2])
+{
+    if (!times)
+        return utimensat(AT_FDCWD, pathname, nullptr, AT_SYMLINK_NOFOLLOW);
+    timespec ts[2];
+    TIMEVAL_TO_TIMESPEC(&times[0], &ts[0]);
+    TIMEVAL_TO_TIMESPEC(&times[1], &ts[1]);
+    return utimensat(AT_FDCWD, pathname, ts, AT_SYMLINK_NOFOLLOW);
+}
+
+// Not in POSIX, originated in BSD but also supported on Linux.
+// https://man.netbsd.org/NetBSD-6.0/futimes.2
+int futimes(int fd, struct timeval const times[2])
+{
+    if (!times)
+        return utimensat(fd, nullptr, nullptr, 0);
+    timespec ts[2];
+    TIMEVAL_TO_TIMESPEC(&times[0], &ts[0]);
+    TIMEVAL_TO_TIMESPEC(&times[1], &ts[1]);
+    return utimensat(fd, nullptr, ts, 0);
+}
+
+char* ctime(time_t const* t)
 {
     return asctime(localtime(t));
 }
 
-char* ctime_r(const time_t* t, char* buf)
+char* ctime_r(time_t const* t, char* buf)
 {
     struct tm tm_buf;
     return asctime_r(localtime_r(t, &tm_buf), buf);
 }
 
-static const int __seconds_per_day = 60 * 60 * 24;
+static int const __seconds_per_day = 60 * 60 * 24;
 
-static void time_to_tm(struct tm* tm, time_t t)
+static bool is_valid_time(time_t timestamp)
 {
+    // Note: these correspond to the number of seconds from epoch to the dates "Jan 1 00:00:00 -2147483648" and "Dec 31 23:59:59 2147483647",
+    // respectively, which are the smallest and biggest representable dates without overflowing tm->tm_year, if it is an int.
+    constexpr time_t smallest_possible_time = -67768040609740800;
+    constexpr time_t biggest_possible_time = 67768036191676799;
+
+    return (timestamp >= smallest_possible_time) && (timestamp <= biggest_possible_time);
+}
+
+static struct tm* time_to_tm(struct tm* tm, time_t t, StringView time_zone)
+{
+    if (!is_valid_time(t)) {
+        errno = EOVERFLOW;
+        return nullptr;
+    }
+
+    if (auto offset = TimeZone::get_time_zone_offset(time_zone, AK::UnixDateTime::from_seconds_since_epoch(t)); offset.has_value()) {
+        tm->tm_isdst = offset->in_dst == TimeZone::InDST::Yes;
+        t += offset->seconds;
+    }
+
     int year = 1970;
     for (; t >= days_in_year(year) * __seconds_per_day; ++year)
         t -= days_in_year(year) * __seconds_per_day;
@@ -116,9 +170,11 @@ static void time_to_tm(struct tm* tm, time_t t)
     tm->tm_mday = days + 1;
     tm->tm_wday = day_of_week(year, month, tm->tm_mday);
     tm->tm_mon = month - 1;
+
+    return tm;
 }
 
-static time_t tm_to_time(struct tm* tm, long timezone_adjust_seconds)
+static time_t tm_to_time(struct tm* tm, StringView time_zone)
 {
     // "The original values of the tm_wday and tm_yday components of the structure are ignored,
     // and the original values of the other components are not restricted to the ranges described in <time.h>.
@@ -127,8 +183,6 @@ static time_t tm_to_time(struct tm* tm, long timezone_adjust_seconds)
     // and the other components are set to represent the specified time since the Epoch,
     // but with their values forced to the ranges indicated in the <time.h> entry;
     // the final value of tm_mday shall not be set until tm_mon and tm_year are determined."
-
-    // FIXME: Handle tm_isdst eventually.
 
     tm->tm_year += tm->tm_mon / 12;
     tm->tm_mon %= 12;
@@ -139,18 +193,33 @@ static time_t tm_to_time(struct tm* tm, long timezone_adjust_seconds)
 
     tm->tm_yday = day_of_year(1900 + tm->tm_year, tm->tm_mon + 1, tm->tm_mday);
     time_t days_since_epoch = years_to_days_since_epoch(1900 + tm->tm_year) + tm->tm_yday;
-    auto timestamp = ((days_since_epoch * 24 + tm->tm_hour) * 60 + tm->tm_min) * 60 + tm->tm_sec + timezone_adjust_seconds;
-    time_to_tm(tm, timestamp);
+    auto timestamp = ((days_since_epoch * 24 + tm->tm_hour) * 60 + tm->tm_min) * 60 + tm->tm_sec;
+
+    if (tm->tm_isdst < 0) {
+        if (auto offset = TimeZone::get_time_zone_offset(time_zone, AK::UnixDateTime::from_seconds_since_epoch(timestamp)); offset.has_value())
+            timestamp -= offset->seconds;
+    } else {
+        auto index = tm->tm_isdst == 0 ? 0 : 1;
+
+        if (auto offsets = TimeZone::get_named_time_zone_offsets(time_zone, AK::UnixDateTime::from_seconds_since_epoch(timestamp)); offsets.has_value())
+            timestamp -= offsets->at(index).seconds;
+    }
+
+    if (!is_valid_time(timestamp)) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+
     return timestamp;
 }
 
 time_t mktime(struct tm* tm)
 {
     tzset();
-    return tm_to_time(tm, daylight ? altzone : timezone);
+    return tm_to_time(tm, __tzname);
 }
 
-struct tm* localtime(const time_t* t)
+struct tm* localtime(time_t const* t)
 {
     tzset();
 
@@ -158,32 +227,31 @@ struct tm* localtime(const time_t* t)
     return localtime_r(t, &tm_buf);
 }
 
-struct tm* localtime_r(const time_t* t, struct tm* tm)
+struct tm* localtime_r(time_t const* t, struct tm* tm)
 {
     if (!t)
         return nullptr;
 
-    time_to_tm(tm, *t - (daylight ? altzone : timezone));
-    return tm;
+    return time_to_tm(tm, *t, __tzname);
 }
 
 time_t timegm(struct tm* tm)
 {
-    return tm_to_time(tm, 0);
+    tm->tm_isdst = 0;
+    return tm_to_time(tm, { __utc, __builtin_strlen(__utc) });
 }
 
-struct tm* gmtime(const time_t* t)
+struct tm* gmtime(time_t const* t)
 {
     static struct tm tm_buf;
     return gmtime_r(t, &tm_buf);
 }
 
-struct tm* gmtime_r(const time_t* t, struct tm* tm)
+struct tm* gmtime_r(time_t const* t, struct tm* tm)
 {
     if (!t)
         return nullptr;
-    time_to_tm(tm, *t);
-    return tm;
+    return time_to_tm(tm, *t, { __utc, __builtin_strlen(__utc) });
 }
 
 char* asctime(const struct tm* tm)
@@ -198,20 +266,23 @@ char* asctime_r(const struct tm* tm, char* buffer)
     constexpr size_t assumed_len = 26;
     size_t filled_size = strftime(buffer, assumed_len, "%a %b %e %T %Y\n", tm);
 
-    // Verify that the buffer was large enough.
-    VERIFY(filled_size != 0);
+    // If the buffer was not large enough, set EOVERFLOW and return null.
+    if (filled_size == 0) {
+        errno = EOVERFLOW;
+        return nullptr;
+    }
 
     return buffer;
 }
 
 // FIXME: Some formats are not supported.
-size_t strftime(char* destination, size_t max_size, const char* format, const struct tm* tm)
+size_t strftime(char* destination, size_t max_size, char const* format, const struct tm* tm)
 {
     tzset();
 
     StringBuilder builder { max_size };
 
-    const int format_len = strlen(format);
+    int const format_len = strlen(format);
     for (int i = 0; i < format_len; ++i) {
         if (format[i] != '%') {
             builder.append(format[i]);
@@ -250,9 +321,13 @@ size_t strftime(char* destination, size_t max_size, const char* format, const st
             case 'H':
                 builder.appendff("{:02}", tm->tm_hour);
                 break;
-            case 'I':
-                builder.appendff("{:02}", tm->tm_hour % 12);
+            case 'I': {
+                int display_hour = tm->tm_hour % 12;
+                if (display_hour == 0)
+                    display_hour = 12;
+                builder.appendff("{:02}", display_hour);
                 break;
+            }
             case 'j':
                 builder.appendff("{:03}", tm->tm_yday + 1);
                 break;
@@ -266,11 +341,15 @@ size_t strftime(char* destination, size_t max_size, const char* format, const st
                 builder.append('\n');
                 break;
             case 'p':
-                builder.append(tm->tm_hour < 12 ? "a.m." : "p.m.");
+                builder.append(tm->tm_hour < 12 ? "AM"sv : "PM"sv);
                 break;
-            case 'r':
-                builder.appendff("{:02}:{:02}:{:02} {}", tm->tm_hour % 12, tm->tm_min, tm->tm_sec, tm->tm_hour < 12 ? "a.m." : "p.m.");
+            case 'r': {
+                int display_hour = tm->tm_hour % 12;
+                if (display_hour == 0)
+                    display_hour = 12;
+                builder.appendff("{:02}:{:02}:{:02} {}", display_hour, tm->tm_min, tm->tm_sec, tm->tm_hour < 12 ? "AM" : "PM");
                 break;
+            }
             case 'R':
                 builder.appendff("{:02}:{:02}", tm->tm_hour, tm->tm_min);
                 break;
@@ -287,20 +366,20 @@ size_t strftime(char* destination, size_t max_size, const char* format, const st
                 builder.appendff("{}", tm->tm_wday ? tm->tm_wday : 7);
                 break;
             case 'U': {
-                const int wday_of_year_beginning = (tm->tm_wday + 6 * tm->tm_yday) % 7;
-                const int week_number = (tm->tm_yday + wday_of_year_beginning) / 7;
+                int const wday_of_year_beginning = (tm->tm_wday + 6 * tm->tm_yday) % 7;
+                int const week_number = (tm->tm_yday + wday_of_year_beginning) / 7;
                 builder.appendff("{:02}", week_number);
                 break;
             }
             case 'V': {
-                const int wday_of_year_beginning = (tm->tm_wday + 6 + 6 * tm->tm_yday) % 7;
+                int const wday_of_year_beginning = (tm->tm_wday + 6 + 6 * tm->tm_yday) % 7;
                 int week_number = (tm->tm_yday + wday_of_year_beginning) / 7 + 1;
                 if (wday_of_year_beginning > 3) {
                     if (tm->tm_yday >= 7 - wday_of_year_beginning)
                         --week_number;
                     else {
-                        const int days_of_last_year = days_in_year(tm->tm_year + 1900 - 1);
-                        const int wday_of_last_year_beginning = (wday_of_year_beginning + 6 * days_of_last_year) % 7;
+                        int const days_of_last_year = days_in_year(tm->tm_year + 1900 - 1);
+                        int const wday_of_last_year_beginning = (wday_of_year_beginning + 6 * days_of_last_year) % 7;
                         week_number = (days_of_last_year + wday_of_last_year_beginning) / 7 + 1;
                         if (wday_of_last_year_beginning > 3)
                             --week_number;
@@ -313,8 +392,8 @@ size_t strftime(char* destination, size_t max_size, const char* format, const st
                 builder.appendff("{}", tm->tm_wday);
                 break;
             case 'W': {
-                const int wday_of_year_beginning = (tm->tm_wday + 6 + 6 * tm->tm_yday) % 7;
-                const int week_number = (tm->tm_yday + wday_of_year_beginning) / 7;
+                int const wday_of_year_beginning = (tm->tm_wday + 6 + 6 * tm->tm_yday) % 7;
+                int const week_number = (tm->tm_yday + wday_of_year_beginning) / 7;
                 builder.appendff("{:02}", week_number);
                 break;
             }
@@ -335,40 +414,25 @@ size_t strftime(char* destination, size_t max_size, const char* format, const st
             return 0;
     }
 
-    auto str = builder.build();
+    auto str = builder.to_byte_string();
     bool fits = str.copy_characters_to_buffer(destination, max_size);
     return fits ? str.length() : 0;
 }
 
-static char __tzname_standard[TZNAME_MAX];
-static char __tzname_daylight[TZNAME_MAX];
-constexpr const char* __utc = "UTC";
-
-long timezone = 0;
-long altzone = 0;
-char* tzname[2] = { const_cast<char*>(__utc), const_cast<char*>(__utc) };
-int daylight = 0;
-
 void tzset()
 {
-    // FIXME: Actually parse the TZ environment variable, described here:
-    // https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap08.html#tag_08
-    StringView time_zone;
-
-    if (char* tz = getenv("TZ"); tz != nullptr)
-        time_zone = tz;
-    else
-        time_zone = TimeZone::system_time_zone();
+    __tzname = TimeZone::current_time_zone();
 
     auto set_default_values = []() {
         timezone = 0;
         altzone = 0;
         daylight = 0;
+        __tzname = StringView { __utc, __builtin_strlen(__utc) };
         tzname[0] = const_cast<char*>(__utc);
         tzname[1] = const_cast<char*>(__utc);
     };
 
-    if (auto offsets = TimeZone::get_named_time_zone_offsets(time_zone, AK::Time::now_realtime()); offsets.has_value()) {
+    if (auto offsets = TimeZone::get_named_time_zone_offsets(__tzname, AK::UnixDateTime::now()); offsets.has_value()) {
         if (!offsets->at(0).name.copy_characters_to_buffer(__tzname_standard, TZNAME_MAX))
             return set_default_values();
         if (!offsets->at(1).name.copy_characters_to_buffer(__tzname_daylight, TZNAME_MAX))
@@ -437,6 +501,8 @@ int clock_settime(clockid_t clock_id, struct timespec* ts)
 
 int clock_nanosleep(clockid_t clock_id, int flags, const struct timespec* requested_sleep, struct timespec* remaining_sleep)
 {
+    __pthread_maybe_cancel();
+
     Syscall::SC_clock_nanosleep_params params { clock_id, flags, requested_sleep, remaining_sleep };
     int rc = syscall(SC_clock_nanosleep, &params);
     __RETURN_WITH_ERRNO(rc, rc, -1);
@@ -447,10 +513,10 @@ int nanosleep(const struct timespec* requested_sleep, struct timespec* remaining
     return clock_nanosleep(CLOCK_REALTIME, 0, requested_sleep, remaining_sleep);
 }
 
-int clock_getres(clockid_t, struct timespec*)
+int clock_getres(clockid_t clock_id, struct timespec* result)
 {
-    dbgln("FIXME: Implement clock_getres()");
-    auto rc = -ENOSYS;
+    Syscall::SC_clock_getres_params params { clock_id, result };
+    int rc = syscall(SC_clock_getres, &params);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 

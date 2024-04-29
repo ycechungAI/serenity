@@ -1,0 +1,276 @@
+--- css/CSS2/floats/floats-wrap-bfc-with-margin-003.tentative.html.ini ---
+[floats-wrap-bfc-with-margin-003.tentative.html]
+  expected: FAIL
+
+--- css/CSS2/floats/float-nowrap-2.html.ini ---
+[float-nowrap-2.html]
+  expected: FAIL
+
+--- css/CSS2/floats/float-nowrap-3.html.ini ---
+[float-nowrap-3.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-placement-vertical-001c.xht.ini ---
+[floats-placement-vertical-001c.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-outside-001.xht.ini ---
+[floats-wrap-bfc-outside-001.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-rule3-outside-right-001.xht.ini ---
+[floats-rule3-outside-right-001.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/overhanging-float-paint-order.html.ini ---
+[overhanging-float-paint-order.html]
+  expected: FAIL
+
+--- css/CSS2/floats/float-nowrap-8.html.ini ---
+[float-nowrap-8.html]
+  expected: FAIL
+
+--- css/CSS2/floats/float-nowrap-9.html.ini ---
+[float-nowrap-9.html]
+  expected: FAIL
+
+
+--- css/CSS2/floats/floats-wrap-top-below-bfc-002l.xht.ini ---
+[floats-wrap-top-below-bfc-002l.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-top-below-bfc-003l.xht.ini ---
+[floats-wrap-top-below-bfc-003l.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/float-in-nested-multicol-001.html.ini ---
+[float-in-nested-multicol-001.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-003-right-table.xht.ini ---
+[floats-wrap-bfc-003-right-table.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/new-fc-relayout.html.ini ---
+[new-fc-relayout.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-002-right-table.xht.ini ---
+[floats-wrap-bfc-002-right-table.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/new-fc-beside-adjoining-float.html.ini ---
+[new-fc-beside-adjoining-float.html]
+  expected: PASS
+
+--- css/CSS2/floats/new-fc-beside-adjoining-float-2.html.ini ---
+[new-fc-beside-adjoining-float-2.html]
+  expected: PASS
+
+--- css/CSS2/floats/floats-placement-vertical-001b.xht.ini ---
+[floats-placement-vertical-001b.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-with-margin-006.tentative.html.ini ---
+[floats-wrap-bfc-with-margin-006.tentative.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-002-left-table.xht.ini ---
+[floats-wrap-bfc-002-left-table.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/remove-block-between-inline-and-float.html.ini ---
+[remove-block-between-inline-and-float.html]
+  expected: FAIL
+
+--- css/CSS2/floats/computed-float-position-absolute.html.ini ---
+[computed-float-position-absolute.html]
+  [The computed value of float with absolute positioning when there is no box should be "none"]
+    expected: FAIL
+
+--- css/CSS2/floats/zero-width-floats.html.ini ---
+[zero-width-floats.html]
+  expected: FAIL
+
+--- css/CSS2/floats/hit-test-floats-003.html.ini ---
+[hit-test-floats-003.html]
+  [Miss float below something else]
+    expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-top-below-bfc-003r.xht.ini ---
+[floats-wrap-top-below-bfc-003r.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-top-below-bfc-002r.xht.ini ---
+[floats-wrap-top-below-bfc-002r.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/float-nowrap-5.html.ini ---
+[float-nowrap-5.html]
+  expected: FAIL
+
+--- css/CSS2/floats/float-nowrap-4.html.ini ---
+[float-nowrap-4.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-placement-vertical-001a.xht.ini ---
+[floats-placement-vertical-001a.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/overflow-scroll-float-paint-order.html.ini ---
+[overflow-scroll-float-paint-order.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-rule3-outside-left-001.xht.ini ---
+[floats-rule3-outside-left-001.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-top-below-inline-002l.xht.ini ---
+[floats-wrap-top-below-inline-002l.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-top-below-inline-003l.xht.ini ---
+[floats-wrap-top-below-inline-003l.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-002-right-overflow.xht.ini ---
+[floats-wrap-bfc-002-right-overflow.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/zero-width-floats-positioning.tentative.html.ini ---
+[zero-width-floats-positioning.tentative.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-with-margin-001a.tentative.html.ini ---
+[floats-wrap-bfc-with-margin-001a.tentative.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-006.xht.ini ---
+[floats-wrap-bfc-006.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-003-left-table.xht.ini ---
+[floats-wrap-bfc-003-left-table.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-008.html.ini ---
+[floats-wrap-bfc-008.html]
+  expected: FAIL
+
+--- css/CSS2/floats/new-fc-separates-from-float-2.html.ini ---
+[new-fc-separates-from-float-2.html]
+  expected: FAIL
+
+--- css/CSS2/floats/new-fc-separates-from-float-3.html.ini ---
+[new-fc-separates-from-float-3.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-top-below-bfc-001l.xht.ini ---
+[floats-wrap-top-below-bfc-001l.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-zero-height-wrap-002.xht.ini ---
+[floats-zero-height-wrap-002.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-with-margin-001.html.ini ---
+[floats-wrap-bfc-with-margin-001.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-001-right-overflow.xht.ini ---
+[floats-wrap-bfc-001-right-overflow.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/new-fc-separates-from-float.html.ini ---
+[new-fc-separates-from-float.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-005.xht.ini ---
+[floats-wrap-bfc-005.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/float-no-content-beside-001.html.ini ---
+[float-no-content-beside-001.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-top-below-bfc-001r.xht.ini ---
+[floats-wrap-top-below-bfc-001r.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/float-nowrap-6.html.ini ---
+[float-nowrap-6.html]
+  expected: FAIL
+
+--- css/CSS2/floats/float-nowrap-7.html.ini ---
+[float-nowrap-7.html]
+  expected: FAIL
+
+--- css/CSS2/floats/hit-test-floats-001.html.ini ---
+[hit-test-floats-001.html]
+  [hit-test-floats-001]
+    expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-with-margin-002.tentative.html.ini ---
+[floats-wrap-bfc-with-margin-002.tentative.html]
+  expected: FAIL
+
+--- css/CSS2/floats/float-nowrap-3-ref.html.ini ---
+[float-nowrap-3-ref.html]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-top-below-inline-003r.xht.ini ---
+[floats-wrap-top-below-inline-003r.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-top-below-inline-002r.xht.ini ---
+[floats-wrap-top-below-inline-002r.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-003-right-overflow.xht.ini ---
+[floats-wrap-bfc-003-right-overflow.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/floats-zero-height-wrap-001.xht.ini ---
+[floats-zero-height-wrap-001.xht]
+  expected: FAIL
+
+--- css/CSS2/floats/float-no-interpolation.html.ini ---
+[float-no-interpolation.html]
+  [CSS Animations: property <float> from [initial\] to [right\] at (0.5) should be [right\]]
+    expected: FAIL
+
+  [CSS Animations: property <float> from [initial\] to [right\] at (0.6) should be [right\]]
+    expected: FAIL
+
+  [CSS Animations: property <float> from [initial\] to [right\] at (1) should be [right\]]
+    expected: FAIL
+
+  [CSS Animations: property <float> from [initial\] to [right\] at (1.5) should be [right\]]
+    expected: FAIL
+
+  [Web Animations: property <float> from [initial\] to [right\] at (-0.3) should be [initial\]]
+    expected: FAIL
+
+  [Web Animations: property <float> from [initial\] to [right\] at (0) should be [initial\]]
+    expected: FAIL
+
+  [Web Animations: property <float> from [initial\] to [right\] at (0.3) should be [initial\]]
+    expected: FAIL
+
+  [Web Animations: property <float> from [initial\] to [right\] at (0.5) should be [right\]]
+    expected: FAIL
+
+  [Web Animations: property <float> from [initial\] to [right\] at (0.6) should be [right\]]
+    expected: FAIL
+
+  [Web Animations: property <float> from [initial\] to [right\] at (1) should be [right\]]
+    expected: FAIL
+
+  [Web Animations: property <float> from [initial\] to [right\] at (1.5) should be [right\]]
+    expected: FAIL
+
+--- css/CSS2/floats/floats-wrap-bfc-004.xht.ini ---
+[floats-wrap-bfc-004.xht]
+  expected: FAIL
+
+

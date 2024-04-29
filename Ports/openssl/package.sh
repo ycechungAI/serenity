@@ -1,22 +1,32 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=openssl
-branch='1.1.1'
-version="${branch}n"
-useconfigure=true
-configscript=Configure
-files="https://ftp.nluug.nl/security/openssl/openssl-${version}.tar.gz openssl-${version}.tar.gz 40dceb51a4f6a5275bde0e6bf20ef4b91bfc32ed57c0552e2e8e15463372b17a"
-auth_type=sha256
-
-depends=("zlib")
-configopts=("--prefix=/usr/local" "-DOPENSSL_SYS_SERENITY=1" "-DOPENSSL_USE_IPV6=0" "zlib" "threads" "no-tests" "no-asm" "serenity-generic")
+port='openssl'
+version='3.1.2'
+useconfigure='true'
+configscript='Configure'
+files=(
+    "https://www.openssl.org/source/openssl-${version}.tar.gz#a0ce69b8b97ea6a35b96875235aa453b966ba3cba8af2de23657d8b6767d6539"
+)
+depends=(
+    'zlib'
+)
+configopts=(
+    '--prefix=/usr/local'
+    '-DOPENSSL_SYS_SERENITY=1'
+    '-DOPENSSL_USE_IPV6=0'
+    'no-asm'
+    'no-tests'
+    'serenity-generic'
+    'threads'
+    'zlib'
+)
 
 configure() {
     export LDFLAGS="-L${SERENITY_INSTALL_ROOT}/usr/local/lib"
-    run ./"$configscript" "${configopts[@]}"
+    run ./"${configscript}" "${configopts[@]}"
 }
 
 install() {
     # The default "install" also installs docs, which we don't want.
-    run make DESTDIR=$DESTDIR install_sw "${installopts[@]}"
-    run make DESTDIR=$DESTDIR install_ssldirs "${installopts[@]}"
+    run make DESTDIR="${DESTDIR}" install_sw "${installopts[@]}"
+    run make DESTDIR="${DESTDIR}" install_ssldirs "${installopts[@]}"
 }

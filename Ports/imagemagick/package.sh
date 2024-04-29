@@ -1,9 +1,16 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=ImageMagick
-version=7.1.0-23
-workdir="${port}-${version}"
-useconfigure="true"
-files="https://github.com/ImageMagick/ImageMagick/archive/refs/tags/${version}.tar.gz imagemagick-v${version}.tar.gz 62c24362891d0af2be9a81d01117195ba0ec8e6982c7568195a33019bfc82188"
-auth_type=sha256
-configopts=("--host=${SERENITY_ARCH}")
-depends=("libpng" "libtiff" "libjpeg")
+port='imagemagick'
+version='7.1.1-15'
+workdir="ImageMagick-${version}"
+useconfigure='true'
+files=(
+    "https://github.com/ImageMagick/ImageMagick/archive/refs/tags/${version}.tar.gz#2372192a76af9be43c0543dd7ae6dfbf34b11fc0203583453ce3f9f707c36bcc"
+)
+configopts=(
+    "--with-sysroot=${SERENITY_INSTALL_ROOT}"
+)
+depends=(
+    'libjpeg'
+    'libpng'
+    'libtiff'
+)

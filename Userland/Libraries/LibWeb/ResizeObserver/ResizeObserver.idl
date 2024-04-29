@@ -1,19 +1,23 @@
 #import <DOM/Element.idl>
 
+// https://drafts.csswg.org/resize-observer-1/#resize-observer-interface
 [Exposed=(Window)]
 interface ResizeObserver {
 
-    // FIXME: This should be a ResizeObserverCallback.
-    constructor(any callback);
+    constructor(ResizeObserverCallback callback);
     undefined observe(Element target, optional ResizeObserverOptions options = {});
     undefined unobserve(Element target);
     undefined disconnect();
 
 };
 
-dictionary ResizeObserverOptions {
-
-    // FIXME: This should be an enum.
-    DOMString box = "content-box";
-
+enum ResizeObserverBoxOptions {
+    "border-box", "content-box", "device-pixel-content-box"
 };
+
+dictionary ResizeObserverOptions {
+    ResizeObserverBoxOptions box = "content-box";
+};
+
+// https://drafts.csswg.org/resize-observer-1/#resize-observer-callback
+callback ResizeObserverCallback = undefined (sequence<ResizeObserverEntry> entries, ResizeObserver observer);

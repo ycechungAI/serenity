@@ -172,3 +172,43 @@ describe("modification of spreadable objects during spread", () => {
         expect(arrayResult).toHaveProperty("1000", 1000);
     });
 });
+
+test("allows assignment expressions", () => {
+    expect("({ ...a = { hello: 'world' } })").toEval();
+    expect("({ ...a += 'hello' })").toEval();
+    expect("({ ...a -= 'hello' })").toEval();
+    expect("({ ...a **= 'hello' })").toEval();
+    expect("({ ...a *= 'hello' })").toEval();
+    expect("({ ...a /= 'hello' })").toEval();
+    expect("({ ...a %= 'hello' })").toEval();
+    expect("({ ...a <<= 'hello' })").toEval();
+    expect("({ ...a >>= 'hello' })").toEval();
+    expect("({ ...a >>>= 'hello' })").toEval();
+    expect("({ ...a &= 'hello' })").toEval();
+    expect("({ ...a ^= 'hello' })").toEval();
+    expect("({ ...a |= 'hello' })").toEval();
+    expect("({ ...a &&= 'hello' })").toEval();
+    expect("({ ...a ||= 'hello' })").toEval();
+    expect("({ ...a ??= 'hello' })").toEval();
+    expect("function* test() { return ({ ...yield a }); }").toEval();
+});
+
+test("spreading null-proto objects", () => {
+    const obj = {
+        __proto__: null,
+        hello: "world",
+        friends: "well hello",
+        toString() {
+            expect().fail("called toString()");
+        },
+        valueOf() {
+            expect().fail("called valueOf()");
+        },
+    };
+    let res;
+    expect(() => {
+        res = { ...obj };
+    }).not.toThrow();
+    expect(res).toHaveProperty("hello", "world");
+    expect(res).toHaveProperty("friends", "well hello");
+});

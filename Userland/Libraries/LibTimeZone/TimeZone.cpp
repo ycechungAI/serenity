@@ -4,10 +4,16 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
+#include <AK/Debug.h>
+#include <AK/ScopeGuard.h>
 #include <LibTimeZone/TimeZone.h>
+#include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 namespace TimeZone {
 
@@ -39,7 +45,7 @@ public:
         }
     }
 
-    ErrorOr<String> read_time_zone()
+    ErrorOr<ByteString> read_time_zone()
     {
         if (!m_file)
             return Error::from_string_literal("Could not open /etc/timezone");
@@ -50,7 +56,7 @@ public:
         if (bytes == 0)
             return Error::from_string_literal("Could not read time zone from /etc/timezone");
 
-        return String(buffer.span().slice(0, bytes)).trim_whitespace();
+        return ByteString(buffer.span().slice(0, bytes)).trim_whitespace();
     }
 
     ErrorOr<void> write_time_zone(StringView time_zone)
@@ -72,22 +78,64 @@ private:
 StringView system_time_zone()
 {
     TimeZoneFile time_zone_file("r");
+    auto time_zone = time_zone_file.read_time_zone();
 
     // FIXME: Propagate the error to existing callers.
-    if (auto time_zone = time_zone_file.read_time_zone(); !time_zone.is_error())
-        return canonicalize_time_zone(time_zone.value()).value_or("UTC"sv);
+    if (time_zone.is_error()) {
+        dbgln_if(TIME_ZONE_DEBUG, "{}", time_zone.error());
+        return "UTC"sv;
+    }
 
-    return "UTC"sv;
+    return canonicalize_time_zone(time_zone.value()).value_or("UTC"sv);
 }
 
 StringView current_time_zone()
 {
-    return canonicalize_time_zone(tzname[0]).value_or("UTC"sv);
+    if (char* tz = getenv("TZ"); tz != nullptr) {
+        // FIXME: Actually parse the TZ environment variable, described here:
+        // https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap08.html#tag_08
+        StringView time_zone { tz, strlen(tz) };
+
+        if (auto maybe_time_zone = canonicalize_time_zone(time_zone); maybe_time_zone.has_value())
+            return *maybe_time_zone;
+
+        dbgln_if(TIME_ZONE_DEBUG, "Could not determine time zone from TZ environment: {}", time_zone);
+        return "UTC"sv;
+    }
+
+#ifdef AK_OS_SERENITY
+    return system_time_zone();
+#else
+    static constexpr auto zoneinfo = "/zoneinfo"sv;
+
+    char* real_path = realpath("/etc/localtime", nullptr);
+    ScopeGuard free_path = [real_path]() { free(real_path); };
+
+    if (real_path) {
+        auto time_zone = StringView { real_path, strlen(real_path) };
+
+        // The zoneinfo file may be located in paths like /usr/share/zoneinfo/ or /usr/share/zoneinfo.default/.
+        // We want to strip any such prefix from the path to arrive at the time zone name.
+        if (auto index = time_zone.find(zoneinfo); index.has_value())
+            time_zone = time_zone.substring_view(*index + zoneinfo.length());
+        if (auto index = time_zone.find('/'); index.has_value())
+            time_zone = time_zone.substring_view(*index + 1);
+
+        if (auto maybe_time_zone = canonicalize_time_zone(time_zone); maybe_time_zone.has_value())
+            return *maybe_time_zone;
+
+        dbgln_if(TIME_ZONE_DEBUG, "Could not determine time zone from /etc/localtime: {}", time_zone);
+    } else {
+        dbgln_if(TIME_ZONE_DEBUG, "Could not read the /etc/localtime link: {}", strerror(errno));
+    }
+
+    return "UTC"sv;
+#endif
 }
 
 ErrorOr<void> change_time_zone([[maybe_unused]] StringView time_zone)
 {
-#ifdef __serenity__
+#ifdef AK_OS_SERENITY
     TimeZoneFile time_zone_file("w");
 
     if (auto new_time_zone = canonicalize_time_zone(time_zone); new_time_zone.has_value())
@@ -100,10 +148,10 @@ ErrorOr<void> change_time_zone([[maybe_unused]] StringView time_zone)
 #endif
 }
 
-Span<StringView const> __attribute__((weak)) all_time_zones()
+ReadonlySpan<TimeZoneIdentifier> __attribute__((weak)) all_time_zones()
 {
 #if !ENABLE_TIME_ZONE_DATA
-    static constexpr auto utc = Array { "UTC"sv };
+    static constexpr auto utc = Array { TimeZoneIdentifier { "UTC"sv, IsLink::No } };
     return utc;
 #else
     return {};
@@ -113,7 +161,7 @@ Span<StringView const> __attribute__((weak)) all_time_zones()
 Optional<TimeZone> __attribute__((weak)) time_zone_from_string([[maybe_unused]] StringView time_zone)
 {
 #if !ENABLE_TIME_ZONE_DATA
-    if (time_zone.equals_ignoring_case("UTC"sv))
+    if (time_zone.equals_ignoring_ascii_case("UTC"sv))
         return TimeZone::UTC;
 #endif
     return {};
@@ -136,7 +184,7 @@ Optional<StringView> canonicalize_time_zone(StringView time_zone)
         return {};
 
     auto canonical_time_zone = time_zone_to_string(*maybe_time_zone);
-    if (canonical_time_zone.is_one_of("Etc/UTC"sv, "Etc/GMT"sv))
+    if (canonical_time_zone.is_one_of("Etc/UTC"sv, "Etc/GMT"sv, "GMT"sv))
         return "UTC"sv;
 
     return canonical_time_zone;
@@ -145,7 +193,7 @@ Optional<StringView> canonicalize_time_zone(StringView time_zone)
 Optional<DaylightSavingsRule> __attribute__((weak)) daylight_savings_rule_from_string(StringView) { return {}; }
 StringView __attribute__((weak)) daylight_savings_rule_to_string(DaylightSavingsRule) { return {}; }
 
-Optional<Offset> __attribute__((weak)) get_time_zone_offset([[maybe_unused]] TimeZone time_zone, AK::Time)
+Optional<Offset> __attribute__((weak)) get_time_zone_offset([[maybe_unused]] TimeZone time_zone, AK::UnixDateTime)
 {
 #if !ENABLE_TIME_ZONE_DATA
     VERIFY(time_zone == TimeZone::UTC);
@@ -155,14 +203,14 @@ Optional<Offset> __attribute__((weak)) get_time_zone_offset([[maybe_unused]] Tim
 #endif
 }
 
-Optional<Offset> get_time_zone_offset(StringView time_zone, AK::Time time)
+Optional<Offset> get_time_zone_offset(StringView time_zone, AK::UnixDateTime time)
 {
     if (auto maybe_time_zone = time_zone_from_string(time_zone); maybe_time_zone.has_value())
         return get_time_zone_offset(*maybe_time_zone, time);
     return {};
 }
 
-Optional<Array<NamedOffset, 2>> __attribute__((weak)) get_named_time_zone_offsets([[maybe_unused]] TimeZone time_zone, AK::Time)
+Optional<Array<NamedOffset, 2>> __attribute__((weak)) get_named_time_zone_offsets([[maybe_unused]] TimeZone time_zone, AK::UnixDateTime)
 {
 #if !ENABLE_TIME_ZONE_DATA
     VERIFY(time_zone == TimeZone::UTC);
@@ -176,7 +224,7 @@ Optional<Array<NamedOffset, 2>> __attribute__((weak)) get_named_time_zone_offset
 #endif
 }
 
-Optional<Array<NamedOffset, 2>> get_named_time_zone_offsets(StringView time_zone, AK::Time time)
+Optional<Array<NamedOffset, 2>> get_named_time_zone_offsets(StringView time_zone, AK::UnixDateTime time)
 {
     if (auto maybe_time_zone = time_zone_from_string(time_zone); maybe_time_zone.has_value())
         return get_named_time_zone_offsets(*maybe_time_zone, time);
@@ -191,5 +239,9 @@ Optional<Location> get_time_zone_location(StringView time_zone)
         return get_time_zone_location(*maybe_time_zone);
     return {};
 }
+
+Optional<Region> __attribute__((weak)) region_from_string(StringView) { return {}; }
+StringView __attribute__((weak)) region_to_string(Region) { return {}; }
+Vector<StringView> __attribute__((weak)) time_zones_in_region(StringView) { return {}; }
 
 }

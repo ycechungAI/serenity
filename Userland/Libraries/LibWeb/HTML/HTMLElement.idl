@@ -1,98 +1,72 @@
+#import <CSS/ElementCSSInlineStyle.idl>
 #import <HTML/DOMStringMap.idl>
+#import <DOM/Element.idl>
+#import <DOM/EventHandler.idl>
 
+// https://html.spec.whatwg.org/multipage/semantics.html#htmlelement
+[Exposed=Window]
 interface HTMLElement : Element {
 
-    [Reflect] attribute DOMString title;
-    [Reflect] attribute DOMString lang;
+    [HTMLConstructor] constructor();
 
-    [Reflect] attribute boolean hidden;
+    // metadata attributes
+    [Reflect, CEReactions] attribute DOMString title;
+    [Reflect, CEReactions] attribute DOMString lang;
+    // FIXME: [CEReactions] attribute boolean translate;
+    [CEReactions] attribute DOMString dir;
 
-    attribute DOMString contentEditable;
-
+    // user interaction
+    [Reflect, CEReactions] attribute boolean hidden;
+    [Reflect, CEReactions] attribute boolean inert;
     undefined click();
+    [Reflect=accesskey, CEReactions] attribute DOMString accessKey;
+    readonly attribute DOMString accessKeyLabel;
+    // FIXME: [CEReactions] attribute boolean draggable;
+    // FIXME: [CEReactions] attribute boolean spellcheck;
+    // FIXME: [CEReactions] attribute DOMString autocapitalize;
 
-    // FIXME: Support the optional FocusOptions parameter.
-    undefined focus();
+    [LegacyNullToEmptyString, CEReactions] attribute DOMString innerText;
+    [LegacyNullToEmptyString, CEReactions] attribute DOMString outerText;
 
-    [LegacyNullToEmptyString] attribute DOMString innerText;
+    // FIXME: ElementInternals attachInternals();
 
+    // The popover API
+    // FIXME: undefined showPopover();
+    // FIXME: undefined hidePopover();
+    // FIXME: boolean togglePopover(optional boolean force);
+    // FIXME: [CEReactions] attribute DOMString? popover;
+
+    // https://drafts.csswg.org/cssom-view/#extensions-to-the-htmlelement-interface
+    readonly attribute Element? offsetParent;
     readonly attribute long offsetTop;
     readonly attribute long offsetLeft;
     readonly attribute long offsetWidth;
     readonly attribute long offsetHeight;
 
-    // FIXME: This should come from a HTMLOrSVGElement mixin
-    [SameObject] readonly attribute DOMStringMap dataset;
-
-    // FIXME: These should all come from a GlobalEventHandlers mixin
-    attribute EventHandler onabort;
-    attribute EventHandler onauxclick;
-    attribute EventHandler onblur;
-    attribute EventHandler oncancel;
-    attribute EventHandler oncanplay;
-    attribute EventHandler oncanplaythrough;
-    attribute EventHandler onchange;
-    attribute EventHandler onclick;
-    attribute EventHandler onclose;
-    attribute EventHandler oncontextmenu;
-    attribute EventHandler oncuechange;
-    attribute EventHandler ondblclick;
-    attribute EventHandler ondrag;
-    attribute EventHandler ondragend;
-    attribute EventHandler ondragenter;
-    attribute EventHandler ondragleave;
-    attribute EventHandler ondragover;
-    attribute EventHandler ondragstart;
-    attribute EventHandler ondrop;
-    attribute EventHandler ondurationchange;
-    attribute EventHandler onemptied;
-    attribute EventHandler onended;
-
-    // FIXME: Should be an OnErrorEventHandler
-    attribute EventHandler onerror;
-
-    attribute EventHandler onfocus;
-    attribute EventHandler onformdata;
-    attribute EventHandler oninput;
-    attribute EventHandler oninvalid;
-    attribute EventHandler onkeydown;
-    attribute EventHandler onkeypress;
-    attribute EventHandler onkeyup;
-    attribute EventHandler onload;
-    attribute EventHandler onloadeddata;
-    attribute EventHandler onloadedmetadata;
-    attribute EventHandler onloadstart;
-    attribute EventHandler onmousedown;
-    [LegacyLenientThis] attribute EventHandler onmouseenter;
-    [LegacyLenientThis] attribute EventHandler onmouseleave;
-    attribute EventHandler onmousemove;
-    attribute EventHandler onmouseout;
-    attribute EventHandler onmouseover;
-    attribute EventHandler onmouseup;
-    attribute EventHandler onpause;
-    attribute EventHandler onplay;
-    attribute EventHandler onplaying;
-    attribute EventHandler onprogress;
-    attribute EventHandler onratechange;
-    attribute EventHandler onreset;
-    attribute EventHandler onresize;
-    attribute EventHandler onscroll;
-    attribute EventHandler onsecuritypolicyviolation;
-    attribute EventHandler onseeked;
-    attribute EventHandler onseeking;
-    attribute EventHandler onselect;
-    attribute EventHandler onslotchange;
-    attribute EventHandler onstalled;
-    attribute EventHandler onsubmit;
-    attribute EventHandler onsuspend;
-    attribute EventHandler ontimeupdate;
-    attribute EventHandler ontoggle;
-    attribute EventHandler onvolumechange;
-    attribute EventHandler onwaiting;
-    attribute EventHandler onwebkitanimationend;
-    attribute EventHandler onwebkitanimationiteration;
-    attribute EventHandler onwebkitanimationstart;
-    attribute EventHandler onwebkittransitionend;
-    attribute EventHandler onwheel;
-
 };
+
+HTMLElement includes GlobalEventHandlers;
+HTMLElement includes ElementContentEditable;
+HTMLElement includes HTMLOrSVGElement;
+
+// https://html.spec.whatwg.org/#elementcontenteditable
+interface mixin ElementContentEditable {
+    [CEReactions] attribute DOMString contentEditable;
+    // FIXME: [CEReactions] attribute DOMString enterKeyHint;
+    readonly attribute boolean isContentEditable;
+    // FIXME: [CEReactions] attribute DOMString inputMode;
+};
+
+// https://html.spec.whatwg.org/#htmlorsvgelement
+interface mixin HTMLOrSVGElement {
+    [SameObject] readonly attribute DOMStringMap dataset;
+    // FIXME: attribute DOMString nonce; // intentionally no [CEReactions]
+
+    [CEReactions, Reflect] attribute boolean autofocus;
+    [CEReactions] attribute long tabIndex;
+    // FIXME: Support the optional FocusOptions parameter.
+    undefined focus();
+    undefined blur();
+};
+
+HTMLElement includes ElementCSSInlineStyle;

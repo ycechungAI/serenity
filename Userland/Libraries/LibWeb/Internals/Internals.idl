@@ -1,0 +1,22 @@
+#import <DOM/EventTarget.idl>
+#import <HTML/HTMLElement.idl>
+#import <Internals/InternalAnimationTimeline.idl>
+
+[Exposed=Nobody]
+interface Internals {
+
+    undefined signalTextTestIsDone();
+    undefined gc();
+    object hitTest(double x, double y);
+
+    undefined sendText(HTMLElement target, DOMString text);
+    undefined commitText();
+
+    undefined click(double x, double y);
+    undefined movePointerTo(double x, double y);
+    undefined wheel(double x, double y, double deltaX, double deltaY);
+
+    boolean dispatchUserActivatedEvent(EventTarget target, Event event);
+
+    InternalAnimationTimeline createInternalAnimationTimeline();
+};

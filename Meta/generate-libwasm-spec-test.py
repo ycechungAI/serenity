@@ -8,6 +8,7 @@ import math
 from tempfile import NamedTemporaryFile
 from subprocess import call
 import json
+import array
 
 atom_end = set('()"' + whitespace)
 
@@ -61,8 +62,90 @@ def parse_typed_value(ast):
         'i64.const': 'i64',
         'f32.const': 'float',
         'f64.const': 'double',
+        'v128.const': 'bigint',
     }
-    if len(ast) == 2 and ast[0][0] in types:
+
+    v128_sizes = {
+        'i8x16': 1,
+        'i16x8': 2,
+        'i32x4': 4,
+        'i64x2': 8,
+        'f32x4': 4,
+        'f64x2': 8,
+    }
+    v128_format_names = {
+        'i8x16': 'b',
+        'i16x8': 'h',
+        'i32x4': 'i',
+        'i64x2': 'q',
+        'f32x4': 'f',
+        'f64x2': 'd',
+    }
+    v128_format_names_unsigned = {
+        'i8x16': 'B',
+        'i16x8': 'H',
+        'i32x4': 'I',
+        'i64x2': 'Q',
+    }
+
+    def parse_v128_chunk(num, type) -> array:
+        negative = 1
+        if num.startswith('-'):
+            negative = -1
+            num = num[1:]
+        elif num.startswith('+'):
+            num = num[1:]
+
+        # wtf spec test, split your wast tests already
+        while num.startswith('0') and not num.startswith('0x'):
+            num = num[1:]
+
+        if num == '':
+            num = '0'
+
+        if type.startswith('f'):
+            def generate():
+                if num == 'nan:canonical':
+                    return float.fromhex('0x7fc00000')
+                if num == 'nan:arithmetic':
+                    return float.fromhex('0x7ff00000')
+                if num == 'nan:signaling':
+                    return float.fromhex('0x7ff80000')
+                if num.startswith('nan:'):
+                    # FIXME: I have no idea if this is actually correct :P
+                    rest = num[4:]
+                    return float.fromhex('0x7ff80000') + int(rest, base=16)
+                if num.lower() == 'infinity':
+                    return float.fromhex('0x7ff00000') * negative
+                try:
+                    return float(num) * negative
+                except ValueError:
+                    return float.fromhex(num) * negative
+
+            value = generate()
+            return struct.pack(f'={v128_format_names[type]}', value)
+        value = negative * int(num.replace('_', ''), base=0)
+        try:
+            return struct.pack(f'={v128_format_names[type]}', value)
+        except struct.error:
+            # The test format uses signed and unsigned values interchangeably, this is probably an unsigned value.
+            return struct.pack(f'={v128_format_names_unsigned[type]}', value)
+
+    if len(ast) >= 2 and ast[0][0] in types:
+        if ast[0][0] == 'v128.const':
+            value = array.array('b')
+            for i, num in enumerate(ast[2:]):
+                size = v128_sizes[ast[1][0]]
+                s = len(value)
+                value.frombytes(parse_v128_chunk(num[0], ast[1][0]))
+                assert len(value) - s == size, f'Expected {size} bytes, got {len(value) - s} bytes'
+
+            assert len(value) == 16, f'Expected 16 bytes, got {len(value)} bytes'
+            return {
+                'type': types[ast[0][0]],
+                'value': value.tobytes().hex()
+            }
+
         return {"type": types[ast[0][0]], "value": ast[1][0]}
 
     return {"type": "error"}
@@ -71,11 +154,11 @@ def parse_typed_value(ast):
 def generate_module_source_for_compilation(entries):
     s = '('
     for entry in entries:
-        if type(entry) == tuple and len(entry) == 1 and type(entry[0]) == str:
+        if type(entry) is tuple and len(entry) == 1 and type(entry[0]) is str:
             s += entry[0] + ' '
-        elif type(entry) == str:
+        elif type(entry) is str:
             s += json.dumps(entry).replace('\\\\', '\\') + ' '
-        elif type(entry) == list:
+        elif type(entry) is list:
             s += generate_module_source_for_compilation(entry)
         else:
             raise Exception("wat? I dunno how to pretty print " + str(type(entry)))
@@ -139,7 +222,7 @@ def generate_module(ast):
 def generate(ast):
     global named_modules, named_modules_inverse, registered_modules
 
-    if type(ast) != list:
+    if type(ast) is not list:
         return []
     tests = []
     for entry in ast:
@@ -285,6 +368,9 @@ def genarg(spec):
 
     def gen():
         x = spec['value']
+        if spec['type'] == 'bigint':
+            return f"0x{x}n"
+
         if spec['type'] in ('i32', 'i64'):
             if x.startswith('0x'):
                 if spec['type'] == 'i32':
@@ -408,7 +494,7 @@ def gentest(entry, main_name):
         isempty = True
         name = str(f"_inline_test_{raw_test_number}")
         raw_test_number += 1
-    if type(name) != str:
+    if type(name) is not str:
         print("Unsupported test case (call to", name, ")", file=stderr)
         return '\n    '
     ident = '_' + re.sub("[^a-zA-Z_0-9]", "_", name)

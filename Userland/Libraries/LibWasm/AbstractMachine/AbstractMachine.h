@@ -11,7 +11,12 @@
 #include <AK/HashTable.h>
 #include <AK/OwnPtr.h>
 #include <AK/Result.h>
+#include <AK/StackInfo.h>
+#include <AK/UFixedBigInt.h>
 #include <LibWasm/Types.h>
+
+// NOTE: Special case for Wasm::Result.
+#include <LibJS/Runtime/Completion.h>
 
 namespace Wasm {
 
@@ -19,23 +24,23 @@ class Configuration;
 struct Interpreter;
 
 struct InstantiationError {
-    String error { "Unknown error" };
+    ByteString error { "Unknown error" };
 };
 struct LinkError {
     enum OtherErrors {
         InvalidImportedModule,
     };
-    Vector<String> missing_imports;
+    Vector<ByteString> missing_imports;
     Vector<OtherErrors> other_errors;
 };
 
-TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, true, true, false, false, false, true, FunctionAddress);
-TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, true, true, false, false, false, true, ExternAddress);
-TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, true, true, false, false, false, true, TableAddress);
-TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, true, true, false, false, false, true, GlobalAddress);
-TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, true, true, false, false, false, true, ElementAddress);
-TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, true, true, false, false, false, true, DataAddress);
-TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, true, true, false, false, false, true, MemoryAddress);
+AK_TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, FunctionAddress, Arithmetic, Comparison, Increment);
+AK_TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, ExternAddress, Arithmetic, Comparison, Increment);
+AK_TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, TableAddress, Arithmetic, Comparison, Increment);
+AK_TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, GlobalAddress, Arithmetic, Comparison, Increment);
+AK_TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, ElementAddress, Arithmetic, Comparison, Increment);
+AK_TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, DataAddress, Arithmetic, Comparison, Increment);
+AK_TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, MemoryAddress, Arithmetic, Comparison, Increment);
 
 // FIXME: These should probably be made generic/virtual if/when we decide to do something more
 //        fancy than just a dumb interpreter.
@@ -70,7 +75,7 @@ public:
     {
     }
 
-    using AnyValueType = Variant<i32, i64, float, double, Reference>;
+    using AnyValueType = Variant<i32, i64, float, double, u128, Reference>;
     explicit Value(AnyValueType value)
         : m_value(move(value))
     {
@@ -107,9 +112,18 @@ public:
             VERIFY(raw_value == 0);
             m_value = Reference { Reference::Null { ValueType(ValueType::Kind::ExternReference) } };
             break;
+        case ValueType::Kind::V128:
+            m_value = u128(0ull, bit_cast<u64>(raw_value));
+            break;
         default:
             VERIFY_NOT_REACHED();
         }
+    }
+
+    template<SameAs<u128> T>
+    explicit Value(T raw_value)
+        : m_value(raw_value)
+    {
     }
 
     ALWAYS_INLINE Value(Value const& value) = default;
@@ -118,14 +132,23 @@ public:
     ALWAYS_INLINE Value& operator=(Value const& value) = default;
 
     template<typename T>
-    ALWAYS_INLINE Optional<T> to()
+    ALWAYS_INLINE Optional<T> to() const
     {
         Optional<T> result;
         m_value.visit(
             [&](auto value) {
-                if constexpr (IsSame<T, decltype(value)>)
-                    result = value;
-                else if constexpr (!IsFloatingPoint<T> && IsSame<decltype(value), MakeSigned<T>>)
+                if constexpr (IsSame<T, decltype(value)> || (!IsFloatingPoint<T> && IsSame<decltype(value), MakeSigned<T>>)) {
+                    result = static_cast<T>(value);
+                } else if constexpr (!IsFloatingPoint<T> && IsConvertible<decltype(value), T>) {
+                    // NOTE: No implicit vector <-> scalar conversion.
+                    if constexpr (!IsSame<T, u128>) {
+                        if (AK::is_within_range<T>(value))
+                            result = static_cast<T>(value);
+                    }
+                }
+            },
+            [&](u128 value) {
+                if constexpr (IsSame<T, u128>)
                     result = value;
             },
             [&](Reference const& value) {
@@ -152,6 +175,7 @@ public:
             [](i64) { return ValueType::Kind::I64; },
             [](float) { return ValueType::Kind::F32; },
             [](double) { return ValueType::Kind::F64; },
+            [](u128) { return ValueType::Kind::V128; },
             [&](Reference const& type) {
                 return type.ref().visit(
                     [](Reference::Func const&) { return ValueType::Kind::FunctionReference; },
@@ -168,7 +192,36 @@ private:
 };
 
 struct Trap {
-    String reason;
+    ByteString reason;
+};
+
+// A variant of Result that does not include external reasons for error (JS::Completion, for now).
+class PureResult {
+public:
+    explicit PureResult(Vector<Value> values)
+        : m_result(move(values))
+    {
+    }
+
+    PureResult(Trap trap)
+        : m_result(move(trap))
+    {
+    }
+
+    auto is_trap() const { return m_result.has<Trap>(); }
+    auto& values() const { return m_result.get<Vector<Value>>(); }
+    auto& values() { return m_result.get<Vector<Value>>(); }
+    auto& trap() const { return m_result.get<Trap>(); }
+    auto& trap() { return m_result.get<Trap>(); }
+
+private:
+    friend class Result;
+    explicit PureResult(Variant<Vector<Value>, Trap>&& result)
+        : m_result(move(result))
+    {
+    }
+
+    Variant<Vector<Value>, Trap> m_result;
 };
 
 class Result {
@@ -183,21 +236,41 @@ public:
     {
     }
 
+    Result(JS::Completion completion)
+        : m_result(move(completion))
+    {
+        VERIFY(m_result.get<JS::Completion>().is_abrupt());
+    }
+
+    Result(PureResult&& result)
+        : m_result(result.m_result.downcast<decltype(m_result)>())
+    {
+    }
+
     auto is_trap() const { return m_result.has<Trap>(); }
+    auto is_completion() const { return m_result.has<JS::Completion>(); }
     auto& values() const { return m_result.get<Vector<Value>>(); }
     auto& values() { return m_result.get<Vector<Value>>(); }
     auto& trap() const { return m_result.get<Trap>(); }
     auto& trap() { return m_result.get<Trap>(); }
+    auto& completion() { return m_result.get<JS::Completion>(); }
+    auto& completion() const { return m_result.get<JS::Completion>(); }
+
+    PureResult assert_wasm_result() &&
+    {
+        VERIFY(!is_completion());
+        return PureResult(move(m_result).downcast<Vector<Value>, Trap>());
+    }
 
 private:
-    Variant<Vector<Value>, Trap> m_result;
+    Variant<Vector<Value>, Trap, JS::Completion> m_result;
 };
 
 using ExternValue = Variant<FunctionAddress, TableAddress, MemoryAddress, GlobalAddress>;
 
 class ExportInstance {
 public:
-    explicit ExportInstance(String name, ExternValue value)
+    explicit ExportInstance(ByteString name, ExternValue value)
         : m_name(move(name))
         , m_value(move(value))
     {
@@ -207,7 +280,7 @@ public:
     auto& value() const { return m_value; }
 
 private:
-    String m_name;
+    ByteString m_name;
     ExternValue m_value;
 };
 
@@ -326,7 +399,7 @@ public:
 
 private:
     Vector<Optional<Reference>> m_elements;
-    TableType const& m_type;
+    TableType m_type;
 };
 
 class MemoryInstance {
@@ -346,7 +419,12 @@ public:
     auto& data() const { return m_data; }
     auto& data() { return m_data; }
 
-    bool grow(size_t size_to_grow)
+    enum class InhibitGrowCallback {
+        No,
+        Yes,
+    };
+
+    bool grow(size_t size_to_grow, InhibitGrowCallback inhibit_callback = InhibitGrowCallback::No)
     {
         if (size_to_grow == 0)
             return true;
@@ -364,8 +442,16 @@ public:
         m_size = new_size;
         // The spec requires that we zero out everything on grow
         __builtin_memset(m_data.offset_pointer(previous_size), 0, size_to_grow);
+
+        // NOTE: This exists because wasm-js-api wants to execute code after a successful grow,
+        //       See [this issue](https://github.com/WebAssembly/spec/issues/1635) for more details.
+        if (inhibit_callback == InhibitGrowCallback::No && successful_grow_hook)
+            successful_grow_hook();
+
         return true;
     }
+
+    Function<void()> successful_grow_hook;
 
 private:
     explicit MemoryInstance(MemoryType const& type)
@@ -373,7 +459,7 @@ private:
     {
     }
 
-    MemoryType const& m_type;
+    MemoryType m_type;
     size_t m_size { 0 };
     ByteBuffer m_data;
 };
@@ -518,7 +604,7 @@ private:
     Vector<EntryType, 1024> m_data;
 };
 
-using InstantiationResult = AK::Result<NonnullOwnPtr<ModuleInstance>, InstantiationError>;
+using InstantiationResult = AK::ErrorOr<NonnullOwnPtr<ModuleInstance>, InstantiationError>;
 
 class AbstractMachine {
 public:
@@ -537,17 +623,18 @@ public:
     void enable_instruction_count_limit() { m_should_limit_instruction_count = true; }
 
 private:
-    Optional<InstantiationError> allocate_all_initial_phase(Module const&, ModuleInstance&, Vector<ExternValue>&, Vector<Value>& global_values);
+    Optional<InstantiationError> allocate_all_initial_phase(Module const&, ModuleInstance&, Vector<ExternValue>&, Vector<Value>& global_values, Vector<FunctionAddress>& own_functions);
     Optional<InstantiationError> allocate_all_final_phase(Module const&, ModuleInstance&, Vector<Vector<Reference>>& elements);
     Store m_store;
+    StackInfo m_stack_info;
     bool m_should_limit_instruction_count { false };
 };
 
 class Linker {
 public:
     struct Name {
-        String module;
-        String name;
+        ByteString module;
+        ByteString name;
         ImportSection::Import::ImportDesc type;
     };
 
@@ -568,7 +655,7 @@ public:
         return m_unresolved_imports;
     }
 
-    AK::Result<Vector<ExternValue>, LinkError> finish();
+    AK::ErrorOr<Vector<ExternValue>, LinkError> finish();
 
 private:
     void populate();
@@ -583,7 +670,7 @@ private:
 }
 
 template<>
-struct AK::Traits<Wasm::Linker::Name> : public AK::GenericTraits<Wasm::Linker::Name> {
+struct AK::Traits<Wasm::Linker::Name> : public AK::DefaultTraits<Wasm::Linker::Name> {
     static constexpr bool is_trivial() { return false; }
     static unsigned hash(Wasm::Linker::Name const& entry) { return pair_int_hash(entry.module.hash(), entry.name.hash()); }
     static bool equals(Wasm::Linker::Name const& a, Wasm::Linker::Name const& b) { return a.name == b.name && a.module == b.module; }

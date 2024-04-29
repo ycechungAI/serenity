@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021-2024, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,85 +8,119 @@
 
 #include <AK/Forward.h>
 #include <AK/Span.h>
+#include <LibJS/Bytecode/Executable.h>
 #include <LibJS/Forward.h>
+#include <LibJS/SourceRange.h>
 
-#define ENUMERATE_BYTECODE_OPS(O)    \
-    O(Add)                           \
-    O(BitwiseAnd)                    \
-    O(BitwiseNot)                    \
-    O(BitwiseOr)                     \
-    O(BitwiseXor)                    \
-    O(Call)                          \
-    O(ConcatString)                  \
-    O(ContinuePendingUnwind)         \
-    O(CopyObjectExcludingProperties) \
-    O(CreateEnvironment)             \
-    O(CreateVariable)                \
-    O(Decrement)                     \
-    O(Div)                           \
-    O(EnterUnwindContext)            \
-    O(EnterObjectEnvironment)        \
-    O(Exp)                           \
-    O(FinishUnwind)                  \
-    O(GetById)                       \
-    O(GetByValue)                    \
-    O(GetIterator)                   \
-    O(GetNewTarget)                  \
-    O(GetObjectPropertyIterator)     \
-    O(GetVariable)                   \
-    O(GreaterThan)                   \
-    O(GreaterThanEquals)             \
-    O(In)                            \
-    O(Increment)                     \
-    O(InstanceOf)                    \
-    O(IteratorNext)                  \
-    O(IteratorResultDone)            \
-    O(IteratorResultValue)           \
-    O(IteratorToArray)               \
-    O(Jump)                          \
-    O(JumpConditional)               \
-    O(JumpNullish)                   \
-    O(JumpUndefined)                 \
-    O(LeaveEnvironment)              \
-    O(LeaveUnwindContext)            \
-    O(LeftShift)                     \
-    O(LessThan)                      \
-    O(LessThanEquals)                \
-    O(Load)                          \
-    O(LoadImmediate)                 \
-    O(LooselyEquals)                 \
-    O(LooselyInequals)               \
-    O(Mod)                           \
-    O(Mul)                           \
-    O(NewArray)                      \
-    O(NewBigInt)                     \
-    O(NewClass)                      \
-    O(NewFunction)                   \
-    O(NewObject)                     \
-    O(NewRegExp)                     \
-    O(NewString)                     \
-    O(Not)                           \
-    O(PushDeclarativeEnvironment)    \
-    O(PutById)                       \
-    O(PutByValue)                    \
-    O(ResolveThisBinding)            \
-    O(Return)                        \
-    O(RightShift)                    \
-    O(SetVariable)                   \
-    O(Store)                         \
-    O(StrictlyEquals)                \
-    O(StrictlyInequals)              \
-    O(Sub)                           \
-    O(Throw)                         \
-    O(Typeof)                        \
-    O(UnaryMinus)                    \
-    O(UnaryPlus)                     \
-    O(UnsignedRightShift)            \
+#define ENUMERATE_BYTECODE_OPS(O)      \
+    O(Add)                             \
+    O(ArrayAppend)                     \
+    O(AsyncIteratorClose)              \
+    O(Await)                           \
+    O(BitwiseAnd)                      \
+    O(BitwiseNot)                      \
+    O(BitwiseOr)                       \
+    O(BitwiseXor)                      \
+    O(BlockDeclarationInstantiation)   \
+    O(Call)                            \
+    O(CallWithArgumentArray)           \
+    O(Catch)                           \
+    O(ConcatString)                    \
+    O(ContinuePendingUnwind)           \
+    O(CopyObjectExcludingProperties)   \
+    O(CreateLexicalEnvironment)        \
+    O(CreateVariable)                  \
+    O(Decrement)                       \
+    O(DeleteById)                      \
+    O(DeleteByIdWithThis)              \
+    O(DeleteByValue)                   \
+    O(DeleteByValueWithThis)           \
+    O(DeleteVariable)                  \
+    O(Div)                             \
+    O(Dump)                            \
+    O(End)                             \
+    O(EnterUnwindContext)              \
+    O(EnterObjectEnvironment)          \
+    O(Exp)                             \
+    O(GetById)                         \
+    O(GetByIdWithThis)                 \
+    O(GetByValue)                      \
+    O(GetByValueWithThis)              \
+    O(GetCalleeAndThisFromEnvironment) \
+    O(GetIterator)                     \
+    O(GetObjectFromIteratorRecord)     \
+    O(GetMethod)                       \
+    O(GetNewTarget)                    \
+    O(GetNextMethodFromIteratorRecord) \
+    O(GetImportMeta)                   \
+    O(GetObjectPropertyIterator)       \
+    O(GetPrivateById)                  \
+    O(GetVariable)                     \
+    O(GetGlobal)                       \
+    O(GreaterThan)                     \
+    O(GreaterThanEquals)               \
+    O(HasPrivateId)                    \
+    O(ImportCall)                      \
+    O(In)                              \
+    O(Increment)                       \
+    O(InstanceOf)                      \
+    O(IteratorClose)                   \
+    O(IteratorNext)                    \
+    O(IteratorToArray)                 \
+    O(Jump)                            \
+    O(JumpIf)                          \
+    O(JumpNullish)                     \
+    O(JumpUndefined)                   \
+    O(LeaveLexicalEnvironment)         \
+    O(LeaveUnwindContext)              \
+    O(LeftShift)                       \
+    O(LessThan)                        \
+    O(LessThanEquals)                  \
+    O(LooselyEquals)                   \
+    O(LooselyInequals)                 \
+    O(Mod)                             \
+    O(Mov)                             \
+    O(Mul)                             \
+    O(NewArray)                        \
+    O(NewClass)                        \
+    O(NewFunction)                     \
+    O(NewObject)                       \
+    O(NewPrimitiveArray)               \
+    O(NewRegExp)                       \
+    O(NewTypeError)                    \
+    O(Not)                             \
+    O(PostfixDecrement)                \
+    O(PostfixIncrement)                \
+    O(PutById)                         \
+    O(PutByIdWithThis)                 \
+    O(PutByValue)                      \
+    O(PutByValueWithThis)              \
+    O(PutPrivateById)                  \
+    O(ResolveThisBinding)              \
+    O(ResolveSuperBase)                \
+    O(Return)                          \
+    O(RightShift)                      \
+    O(ScheduleJump)                    \
+    O(SetVariable)                     \
+    O(SetLocal)                        \
+    O(StrictlyEquals)                  \
+    O(StrictlyInequals)                \
+    O(Sub)                             \
+    O(SuperCallWithArgumentArray)      \
+    O(Throw)                           \
+    O(ThrowIfNotObject)                \
+    O(ThrowIfNullish)                  \
+    O(ThrowIfTDZ)                      \
+    O(Typeof)                          \
+    O(TypeofVariable)                  \
+    O(UnaryMinus)                      \
+    O(UnaryPlus)                       \
+    O(UnsignedRightShift)              \
     O(Yield)
 
 namespace JS::Bytecode {
 
-class Instruction {
+class alignas(void*) Instruction {
 public:
     constexpr static bool IsTerminator = false;
 
@@ -97,52 +131,61 @@ public:
 #undef __BYTECODE_OP
     };
 
-    bool is_terminator() const;
     Type type() const { return m_type; }
-    size_t length() const;
-    String to_string(Bytecode::Executable const&) const;
+    size_t length() const { return m_length; }
+    ByteString to_byte_string(Bytecode::Executable const&) const;
     ThrowCompletionOr<void> execute(Bytecode::Interpreter&) const;
-    void replace_references(BasicBlock const&, BasicBlock const&);
     static void destroy(Instruction&);
 
+    // FIXME: Find a better way to organize this information
+    void set_source_record(SourceRecord rec) { m_source_record = rec; }
+    SourceRecord source_record() const { return m_source_record; }
+
 protected:
-    explicit Instruction(Type type)
+    Instruction(Type type, size_t length)
         : m_type(type)
+        , m_length(length)
     {
     }
 
 private:
+    SourceRecord m_source_record {};
     Type m_type {};
+    size_t m_length {};
 };
 
 class InstructionStreamIterator {
 public:
-    explicit InstructionStreamIterator(ReadonlyBytes bytes)
-        : m_bytes(bytes)
+    InstructionStreamIterator(ReadonlyBytes bytes, Executable const* executable = nullptr, size_t offset = 0)
+        : m_begin(bytes.data())
+        , m_end(bytes.data() + bytes.size())
+        , m_ptr(bytes.data() + offset)
+        , m_executable(executable)
     {
     }
 
-    size_t offset() const { return m_offset; }
-    bool at_end() const { return m_offset >= m_bytes.size(); }
-    void jump(size_t offset)
-    {
-        VERIFY(offset <= m_bytes.size());
-        m_offset = offset;
-    }
+    size_t offset() const { return m_ptr - m_begin; }
+    bool at_end() const { return m_ptr >= m_end; }
 
     Instruction const& operator*() const { return dereference(); }
 
     ALWAYS_INLINE void operator++()
     {
-        VERIFY(!at_end());
-        m_offset += dereference().length();
+        m_ptr += dereference().length();
     }
 
-private:
-    Instruction const& dereference() const { return *reinterpret_cast<Instruction const*>(m_bytes.data() + offset()); }
+    UnrealizedSourceRange source_range() const;
+    RefPtr<SourceCode> source_code() const;
 
-    ReadonlyBytes m_bytes;
-    size_t m_offset { 0 };
+    Executable const* executable() const { return m_executable; }
+
+private:
+    Instruction const& dereference() const { return *reinterpret_cast<Instruction const*>(m_ptr); }
+
+    u8 const* m_begin { nullptr };
+    u8 const* m_end { nullptr };
+    u8 const* m_ptr { nullptr };
+    GCPtr<Executable const> m_executable;
 };
 
 }

@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <AK/Platform.h>
 #include <Kernel/API/POSIX/sys/types.h>
 
 #ifdef __cplusplus
@@ -14,7 +13,9 @@ extern "C" {
 #endif
 
 struct __attribute__((packed)) __mcontext {
-    int stub;
+    uint64_t x[31];
+    uint64_t sp;
+    uint64_t pc;
 };
 
 #ifdef __cplusplus

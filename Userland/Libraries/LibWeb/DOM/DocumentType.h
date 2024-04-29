@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <AK/FlyString.h>
+#include <AK/String.h>
 #include <LibWeb/DOM/ChildNode.h>
 #include <LibWeb/DOM/Node.h>
 
@@ -15,32 +15,36 @@ namespace Web::DOM {
 class DocumentType final
     : public Node
     , public ChildNode<DocumentType> {
+    WEB_PLATFORM_OBJECT(DocumentType, Node);
+    JS_DECLARE_ALLOCATOR(DocumentType);
+
 public:
-    using WrapperType = Bindings::DocumentTypeWrapper;
+    [[nodiscard]] static JS::NonnullGCPtr<DocumentType> create(Document&);
 
-    static NonnullRefPtr<DocumentType> create(Document& document)
-    {
-        return adopt_ref(*new DocumentType(document));
-    }
-
-    explicit DocumentType(Document&);
     virtual ~DocumentType() override = default;
 
-    virtual FlyString node_name() const override { return "#doctype"; }
+    virtual FlyString node_name() const override { return "#doctype"_fly_string; }
 
-    const String& name() const { return m_name; }
-    void set_name(const String& name) { m_name = name; }
+    String const& name() const { return m_name; }
+    void set_name(String const& name) { m_name = name; }
 
-    const String& public_id() const { return m_public_id; }
-    void set_public_id(const String& public_id) { m_public_id = public_id; }
+    String const& public_id() const { return m_public_id; }
+    void set_public_id(String const& public_id) { m_public_id = public_id; }
 
-    const String& system_id() const { return m_system_id; }
-    void set_system_id(const String& system_id) { m_system_id = system_id; }
+    String const& system_id() const { return m_system_id; }
+    void set_system_id(String const& system_id) { m_system_id = system_id; }
 
 private:
+    explicit DocumentType(Document&);
+
+    virtual void initialize(JS::Realm&) override;
+
     String m_name;
     String m_public_id;
     String m_system_id;
 };
+
+template<>
+inline bool Node::fast_is<DocumentType>() const { return is_document_type(); }
 
 }

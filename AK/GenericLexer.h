@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Result.h>
+#include <AK/String.h>
 #include <AK/StringView.h>
 
 namespace AK {
@@ -22,12 +23,20 @@ public:
     constexpr size_t tell_remaining() const { return m_input.length() - m_index; }
 
     StringView remaining() const { return m_input.substring_view(m_index); }
+    StringView input() const { return m_input; }
 
     constexpr bool is_eof() const { return m_index >= m_input.length(); }
 
     constexpr char peek(size_t offset = 0) const
     {
         return (m_index + offset < m_input.length()) ? m_input[m_index + offset] : '\0';
+    }
+
+    Optional<StringView> peek_string(size_t length, size_t offset = 0) const
+    {
+        if (m_index + offset + length > m_input.length())
+            return {};
+        return m_input.substring_view(m_index + offset, length);
     }
 
     constexpr bool next_is(char expected) const
@@ -43,7 +52,7 @@ public:
         return true;
     }
 
-    constexpr bool next_is(const char* expected) const
+    constexpr bool next_is(char const* expected) const
     {
         for (size_t i = 0; expected[i] != '\0'; ++i)
             if (peek(i) != expected[i])
@@ -70,7 +79,7 @@ public:
     }
 
     template<typename T>
-    constexpr bool consume_specific(const T& next)
+    constexpr bool consume_specific(T const& next)
     {
         if (!next_is(next))
             return false;
@@ -84,18 +93,20 @@ public:
     }
 
 #ifndef KERNEL
-    bool consume_specific(const String& next)
+    bool consume_specific(ByteString next) = delete;
+
+    bool consume_specific(String const& next)
     {
-        return consume_specific(StringView { next });
+        return consume_specific(next.bytes_as_string_view());
     }
 #endif
 
-    constexpr bool consume_specific(const char* next)
+    constexpr bool consume_specific(char const* next)
     {
-        return consume_specific(StringView { next });
+        return consume_specific(StringView { next, __builtin_strlen(next) });
     }
 
-    constexpr char consume_escaped_character(char escape_char = '\\', StringView escape_map = "n\nr\rt\tb\bf\f")
+    constexpr char consume_escaped_character(char escape_char = '\\', StringView escape_map = "n\nr\rt\tb\bf\f"sv)
     {
         if (!consume_specific(escape_char))
             return consume();
@@ -114,12 +125,14 @@ public:
     StringView consume_all();
     StringView consume_line();
     StringView consume_until(char);
-    StringView consume_until(const char*);
+    StringView consume_until(char const*);
     StringView consume_until(StringView);
     StringView consume_quoted_string(char escape_char = 0);
 #ifndef KERNEL
-    String consume_and_unescape_string(char escape_char = '\\');
+    Optional<ByteString> consume_and_unescape_string(char escape_char = '\\');
 #endif
+    template<Integral T>
+    ErrorOr<T> consume_decimal_integer();
 
     enum class UnicodeEscapeError {
         MalformedUnicodeEscape,
@@ -141,15 +154,13 @@ public:
         while (!is_eof() && peek() != stop) {
             ++m_index;
         }
-        ignore();
     }
 
-    constexpr void ignore_until(const char* stop)
+    constexpr void ignore_until(char const* stop)
     {
         while (!is_eof() && !next_is(stop)) {
             ++m_index;
         }
-        ignore(__builtin_strlen(stop));
     }
 
     /*
@@ -204,8 +215,7 @@ public:
             ++m_index;
     }
 
-    // Ignore characters until `pred` return true
-    // We don't skip the stop character as it may not be a unique value
+    // Ignore characters until `pred` returns true
     template<typename TPredicate>
     constexpr void ignore_until(TPredicate pred)
     {
@@ -224,17 +234,53 @@ private:
 #endif
 };
 
+class LineTrackingLexer : public GenericLexer {
+public:
+    using GenericLexer::GenericLexer;
+
+    struct Position {
+        size_t offset { 0 };
+        size_t line { 0 };
+        size_t column { 0 };
+    };
+
+    LineTrackingLexer(StringView input, Position start_position)
+        : GenericLexer(input)
+        , m_cached_position {
+            .line = start_position.line,
+            .column = start_position.column,
+        }
+    {
+    }
+
+    Position cached_position() const { return m_cached_position; }
+    void restore_cached_offset(Position cached_position) { m_cached_position = cached_position; }
+    Position position_for(size_t) const;
+    Position current_position() const { return position_for(m_index); }
+
+protected:
+    mutable Position m_cached_position;
+};
+
 constexpr auto is_any_of(StringView values)
 {
     return [values](auto c) { return values.contains(c); };
 }
 
-constexpr auto is_path_separator = is_any_of("/\\");
-constexpr auto is_quote = is_any_of("'\"");
+constexpr auto is_not_any_of(StringView values)
+{
+    return [values](auto c) { return !values.contains(c); };
+}
+
+constexpr auto is_path_separator = is_any_of("/\\"sv);
+constexpr auto is_quote = is_any_of("'\""sv);
 
 }
 
+#if USING_AK_GLOBALLY
 using AK::GenericLexer;
 using AK::is_any_of;
 using AK::is_path_separator;
 using AK::is_quote;
+using AK::LineTrackingLexer;
+#endif

@@ -1,16 +1,21 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=hatari
-useconfigure=true
-version=2.4.0-devel
-depends=("SDL2" "zlib")
-commit=353379e1f8a847cc0e284541d2b40fd49d175d22
-workdir="${port}-${commit}"
-configopts=("-DCMAKE_TOOLCHAIN_FILE=${SERENITY_BUILD_DIR}/CMakeToolchain.txt")
-files="https://github.com/hatari/hatari/archive/${commit}.tar.gz ${commit}.tar.gz 617f95b30c4e590bb61ddcc1dafc22f4bf270377caa7aa5867f3f7413250b538"
-auth_type=sha256
-launcher_name=Hatari
-launcher_category=Games
-launcher_command=hatari
+port='hatari'
+useconfigure='true'
+version='2.4.1'
+depends=(
+    'SDL2'
+    'zlib'
+)
+configopts=(
+    "-DCMAKE_TOOLCHAIN_FILE=${SERENITY_BUILD_DIR}/CMakeToolchain.txt"
+)
+files=(
+    "https://github.com/hatari/hatari/archive/refs/tags/v${version}.tar.gz#68c5edbe60db7a83e6e9b427eaac1136b62653846d64e415850e88d9a6a2cbc2"
+)
+launcher_name='Hatari'
+launcher_category='&Games'
+launcher_command='/usr/local/bin/hatari'
+icon_file='share/icons/hicolor/32x32/apps/hatari.png'
 
 configure() {
     run cmake "${configopts[@]}"

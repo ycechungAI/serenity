@@ -1,13 +1,21 @@
-compile_gml(FontPickerDialog.gml FontPickerDialogGML.h font_picker_dialog_gml)
-compile_gml(FilePickerDialog.gml FilePickerDialogGML.h file_picker_dialog_gml)
-compile_gml(PasswordInputDialog.gml PasswordInputDialogGML.h password_input_dialog_gml)
+compile_gml(DynamicWidgetContainerControls.gml DynamicWidgetContainerControls.cpp)
+
+compile_gml(AboutDialog.gml AboutDialogGML.cpp)
+stringify_gml(DatePickerDialog.gml DatePickerDialogGML.h date_picker_dialog_gml)
+compile_gml(EmojiInputDialog.gml EmojiInputDialogGML.cpp)
+compile_gml(FontPickerDialog.gml FontPickerDialogGML.cpp)
+compile_gml(FilePickerDialog.gml FilePickerDialogGML.cpp)
+compile_gml(IncrementalSearchBanner.gml IncrementalSearchBannerGML.cpp)
+compile_gml(PasswordInputDialog.gml PasswordInputDialogGML.cpp)
 
 set(SOURCES
     AboutDialog.cpp
+    AboutDialogGML.cpp
     AbstractButton.cpp
     AbstractScrollableWidget.cpp
     AbstractSlider.cpp
     AbstractTableView.cpp
+    AbstractThemePreview.cpp
     AbstractView.cpp
     AbstractZoomPanWidget.cpp
     Action.cpp
@@ -23,24 +31,31 @@ set(SOURCES
     ColorInput.cpp
     ColorPicker.cpp
     ColumnsView.cpp
-    CommonActions.cpp
-    CommonLocationsProvider.cpp
     ComboBox.cpp
     CommandPalette.cpp
+    CommonActions.cpp
+    CommonLocationsProvider.cpp
+    CommonMenus.cpp
+    ConnectionToWindowManagerServer.cpp
+    ConnectionToWindowServer.cpp
+    DatePicker.cpp
     Desktop.cpp
     Dialog.cpp
     DisplayLink.cpp
     DragOperation.cpp
+    DynamicWidgetContainer.cpp
+    DynamicWidgetContainerControls.cpp
     EditingEngine.cpp
     EmojiInputDialog.cpp
+    EmojiInputDialogGML.cpp
     Event.cpp
     FileIconProvider.cpp
     FilePicker.cpp
-    FilePickerDialogGML.h
+    FilePickerDialogGML.cpp
     FileSystemModel.cpp
     FilteringProxyModel.cpp
     FontPicker.cpp
-    FontPickerDialogGML.h
+    FontPickerDialogGML.cpp
     Frame.cpp
     GitCommitLexer.cpp
     GitCommitSyntaxHighlighter.cpp
@@ -51,21 +66,24 @@ set(SOURCES
     GML/SyntaxHighlighter.cpp
     GroupBox.cpp
     HeaderView.cpp
-    INILexer.cpp
-    INISyntaxHighlighter.cpp
     Icon.cpp
     IconView.cpp
     ImageWidget.cpp
+    IncrementalSearchBanner.cpp
+    IncrementalSearchBannerGML.cpp
+    INILexer.cpp
+    INISyntaxHighlighter.cpp
     InputBox.cpp
     JsonArrayModel.cpp
     Label.cpp
+    LabelWithEventDispatcher.cpp
     Layout.cpp
     LazyWidget.cpp
     LinkLabel.cpp
     ListView.cpp
     Menu.cpp
-    MenuItem.cpp
     Menubar.cpp
+    MenuItem.cpp
     MessageBox.cpp
     Model.cpp
     ModelIndex.cpp
@@ -73,14 +91,21 @@ set(SOURCES
     MouseTracker.cpp
     MultiView.cpp
     Notification.cpp
+    NumericInput.cpp
+    Object.cpp
     OpacitySlider.cpp
     Painter.cpp
     PasswordInputDialog.cpp
-    PasswordInputDialogGML.h
+    PasswordInputDialogGML.cpp
+    PathBreadcrumbbar.cpp
     PersistentModelIndex.cpp
+    Process.cpp
     ProcessChooser.cpp
     Progressbar.cpp
+    Property.cpp
+    PropertyDeserializer.cpp
     RadioButton.cpp
+    RangeSlider.cpp
     RegularEditingEngine.cpp
     ResizeCorner.cpp
     RunningProcessesModel.cpp
@@ -96,8 +121,8 @@ set(SOURCES
     Splitter.cpp
     StackWidget.cpp
     Statusbar.cpp
-    TabWidget.cpp
     TableView.cpp
+    TabWidget.cpp
     TextBox.cpp
     TextDocument.cpp
     TextEditor.cpp
@@ -105,30 +130,31 @@ set(SOURCES
     ToolbarContainer.cpp
     Tray.cpp
     TreeView.cpp
+    TreeViewModel.cpp
     UndoStack.cpp
     ValueSlider.cpp
     Variant.cpp
     VimEditingEngine.cpp
     Widget.cpp
     Window.cpp
-        ConnectionToWindowServer.cpp
-        ConnectionToWindowMangerServer.cpp
-    Wizards/WizardDialog.cpp
     Wizards/AbstractWizardPage.cpp
     Wizards/CoverWizardPage.cpp
+    Wizards/WizardDialog.cpp
     Wizards/WizardPage.cpp
 )
 
 set(GENERATED_SOURCES
-    ../../Services/WindowServer/WindowClientEndpoint.h
-    ../../Services/WindowServer/WindowServerEndpoint.h
-    ../../Services/WindowServer/WindowManagerClientEndpoint.h
-    ../../Services/WindowServer/WindowManagerServerEndpoint.h
-    ../../Services/NotificationServer/NotificationClientEndpoint.h
-    ../../Services/NotificationServer/NotificationServerEndpoint.h
     ../../Services/Clipboard/ClipboardClientEndpoint.h
     ../../Services/Clipboard/ClipboardServerEndpoint.h
+    ../../Services/NotificationServer/NotificationClientEndpoint.h
+    ../../Services/NotificationServer/NotificationServerEndpoint.h
+    ../../Services/WindowServer/WindowClientEndpoint.h
+    ../../Services/WindowServer/WindowManagerClientEndpoint.h
+    ../../Services/WindowServer/WindowManagerServerEndpoint.h
+    ../../Services/WindowServer/WindowServerEndpoint.h
+    DatePickerDialogGML.h
 )
 
 serenity_lib(LibGUI gui)
-target_link_libraries(LibGUI LibCore LibGfx LibIPC LibThreading LibRegex LibSyntax LibConfig)
+target_link_libraries(LibGUI PRIVATE LibCore LibELF LibFileSystem LibGfx LibImageDecoderClient LibIPC LibThreading LibRegex LibConfig LibUnicode LibURL)
+target_link_libraries(LibGUI PUBLIC LibSyntax)

@@ -14,14 +14,17 @@ namespace Web::Layout {
 
 class LineBoxFragment;
 
-class TextNode : public Node {
+class TextNode final : public Node {
+    JS_CELL(TextNode, Node);
+    JS_DECLARE_ALLOCATOR(TextNode);
+
 public:
     TextNode(DOM::Document&, DOM::Text&);
     virtual ~TextNode() override;
 
     const DOM::Text& dom_node() const { return static_cast<const DOM::Text&>(*Node::dom_node()); }
 
-    const String& text_for_rendering() const { return m_text_for_rendering; }
+    String const& text_for_rendering() const;
 
     struct Chunk {
         Utf8View view;
@@ -33,31 +36,27 @@ public:
 
     class ChunkIterator {
     public:
-        ChunkIterator(StringView text, LayoutMode, bool wrap_lines, bool respect_linebreaks);
+        ChunkIterator(StringView text, bool wrap_lines, bool respect_linebreaks);
         Optional<Chunk> next();
 
     private:
-        Optional<Chunk> try_commit_chunk(Utf8View::Iterator const& start, Utf8View::Iterator const& end, bool has_breaking_newline, bool must_commit = false) const;
+        Optional<Chunk> try_commit_chunk(Utf8View::Iterator const& start, Utf8View::Iterator const& end, bool has_breaking_newline) const;
 
-        const LayoutMode m_layout_mode;
-        const bool m_wrap_lines;
-        const bool m_respect_linebreaks;
-        bool m_last_was_space { false };
-        bool m_last_was_newline { false };
+        bool const m_wrap_lines;
+        bool const m_respect_linebreaks;
         Utf8View m_utf8_view;
         Utf8View::Iterator m_iterator;
     };
 
-    void compute_text_for_rendering(bool collapse, bool previous_is_empty_or_ends_in_whitespace);
+    void invalidate_text_for_rendering();
+    void compute_text_for_rendering();
 
-    virtual RefPtr<Painting::Paintable> create_paintable() const override;
+    virtual JS::GCPtr<Painting::Paintable> create_paintable() const override;
 
 private:
     virtual bool is_text_node() const final { return true; }
-    void paint_cursor_if_needed(PaintContext&, const LineBoxFragment&) const;
-    void paint_text_decoration(Gfx::Painter&, LineBoxFragment const&) const;
 
-    String m_text_for_rendering;
+    Optional<String> m_text_for_rendering;
 };
 
 template<>

@@ -1,8 +1,19 @@
 #!/usr/bin/env -S bash ../.port_include.sh
-port=lua
-version=5.3.6
-files="http://www.lua.org/ftp/lua-${version}.tar.gz lua-${version}.tar.gz fc5fd69bb8736323f026672b1b7235da613d7177e72558893a0bdcd320466d60"
-depends=("readline")
-auth_type=sha256
-makeopts=("-Csrc/" "-j$(nproc)" "serenity" "CC=${CC}" "AR=${AR}" "RANLIB=${RANLIB}" )
-installopts=("INSTALL_TOP=${SERENITY_INSTALL_ROOT}/usr/local")
+port='lua'
+version='5.4.6'
+files=(
+    "http://www.lua.org/ftp/lua-${version}.tar.gz#7d5ea1b9cb6aa0b59ca3dde1c6adcb57ef83a1ba8e5432c0ecd06bf439b3ad88"
+)
+depends=(
+    'readline'
+)
+makeopts+=(
+    '-Csrc/'
+    'serenity'
+    "CC=${CC}"
+    "AR=${AR}"
+    "RANLIB=${RANLIB}"
+)
+installopts=(
+    "INSTALL_TOP=${SERENITY_INSTALL_ROOT}/usr/local"
+)

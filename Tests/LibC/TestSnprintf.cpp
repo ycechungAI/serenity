@@ -11,6 +11,7 @@
 #include <AK/StringBuilder.h>
 #include <ctype.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -18,16 +19,16 @@
 
 template<typename TArg>
 struct Testcase {
-    const char* dest;
+    char const* dest;
     size_t dest_n;
-    const char* fmt;
-    const TArg arg;
+    char const* fmt;
+    TArg const arg;
     int expected_return;
-    const char* dest_expected;
+    char const* dest_expected;
     size_t dest_expected_n; // == dest_n
 };
 
-static String show(const ByteBuffer& buf)
+static ByteString show(ByteBuffer const& buf)
 {
     StringBuilder builder;
     for (size_t i = 0; i < buf.size(); ++i) {
@@ -42,11 +43,11 @@ static String show(const ByteBuffer& buf)
             builder.append('_');
     }
     builder.append(')');
-    return builder.build();
+    return builder.to_byte_string();
 }
 
 template<typename TArg>
-static bool test_single(const Testcase<TArg>& testcase)
+static bool test_single(Testcase<TArg> const& testcase)
 {
     constexpr size_t SANDBOX_CANARY_SIZE = 8;
 
@@ -58,7 +59,7 @@ static bool test_single(const Testcase<TArg>& testcase)
 
     // Setup
     ByteBuffer actual = ByteBuffer::create_uninitialized(SANDBOX_CANARY_SIZE + testcase.dest_n + SANDBOX_CANARY_SIZE).release_value();
-    fill_with_random(actual.data(), actual.size());
+    fill_with_random(actual);
     ByteBuffer expected = actual;
     VERIFY(actual.offset_pointer(0) != expected.offset_pointer(0));
     actual.overwrite(SANDBOX_CANARY_SIZE, testcase.dest, testcase.dest_n);
@@ -71,9 +72,9 @@ static bool test_single(const Testcase<TArg>& testcase)
 
     // Checking the results:
     bool return_ok = actual_return == testcase.expected_return;
-    bool canary_1_ok = actual.slice(0, SANDBOX_CANARY_SIZE) == expected.slice(0, SANDBOX_CANARY_SIZE);
-    bool main_ok = actual.slice(SANDBOX_CANARY_SIZE, testcase.dest_n) == expected.slice(SANDBOX_CANARY_SIZE, testcase.dest_n);
-    bool canary_2_ok = actual.slice(SANDBOX_CANARY_SIZE + testcase.dest_n, SANDBOX_CANARY_SIZE) == expected.slice(SANDBOX_CANARY_SIZE + testcase.dest_n, SANDBOX_CANARY_SIZE);
+    bool canary_1_ok = MUST(actual.slice(0, SANDBOX_CANARY_SIZE)) == MUST(expected.slice(0, SANDBOX_CANARY_SIZE));
+    bool main_ok = MUST(actual.slice(SANDBOX_CANARY_SIZE, testcase.dest_n)) == MUST(expected.slice(SANDBOX_CANARY_SIZE, testcase.dest_n));
+    bool canary_2_ok = MUST(actual.slice(SANDBOX_CANARY_SIZE + testcase.dest_n, SANDBOX_CANARY_SIZE)) == MUST(expected.slice(SANDBOX_CANARY_SIZE + testcase.dest_n, SANDBOX_CANARY_SIZE));
     bool buf_ok = actual == expected;
 
     // Evaluate gravity:
@@ -84,20 +85,20 @@ static bool test_single(const Testcase<TArg>& testcase)
     if (!canary_1_ok) {
         warnln("Canary 1 overwritten: Expected {}\n"
                "                   instead got {}",
-            show(expected.slice(0, SANDBOX_CANARY_SIZE)),
-            show(actual.slice(0, SANDBOX_CANARY_SIZE)));
+            show(MUST(expected.slice(0, SANDBOX_CANARY_SIZE))),
+            show(MUST(actual.slice(0, SANDBOX_CANARY_SIZE))));
     }
     if (!main_ok) {
         warnln("Wrong output: Expected {}\n"
                "          instead, got {}",
-            show(expected.slice(SANDBOX_CANARY_SIZE, testcase.dest_n)),
-            show(actual.slice(SANDBOX_CANARY_SIZE, testcase.dest_n)));
+            show(MUST(expected.slice(SANDBOX_CANARY_SIZE, testcase.dest_n))),
+            show(MUST(actual.slice(SANDBOX_CANARY_SIZE, testcase.dest_n))));
     }
     if (!canary_2_ok) {
         warnln("Canary 2 overwritten: Expected {}\n"
                "                  instead, got {}",
-            show(expected.slice(SANDBOX_CANARY_SIZE + testcase.dest_n, SANDBOX_CANARY_SIZE)),
-            show(actual.slice(SANDBOX_CANARY_SIZE + testcase.dest_n, SANDBOX_CANARY_SIZE)));
+            show(MUST(expected.slice(SANDBOX_CANARY_SIZE + testcase.dest_n, SANDBOX_CANARY_SIZE))),
+            show(MUST(actual.slice(SANDBOX_CANARY_SIZE + testcase.dest_n, SANDBOX_CANARY_SIZE))));
     }
     if (!return_ok) {
         warnln("Wrong return value: Expected {}, got {} instead!", testcase.expected_return, actual_return);
@@ -109,41 +110,41 @@ static bool test_single(const Testcase<TArg>& testcase)
 // Drop the NUL terminator added by the C++ compiler.
 #define LITERAL(x) x, (sizeof(x) - 1)
 
-static const char* const POISON = (const char*)1;
+static char const* const POISON = (char const*)1;
 
 TEST_CASE(golden_path)
 {
-    EXPECT(test_single<const char*>({ LITERAL("Hello World!\0\0\0"), "Hello Friend!", POISON, 13, LITERAL("Hello Friend!\0\0") }));
-    EXPECT(test_single<const char*>({ LITERAL("Hello World!\0\0\0"), "Hello %s!", "Friend", 13, LITERAL("Hello Friend!\0\0") }));
-    EXPECT(test_single<const char*>({ LITERAL("aaaaaaaaaa"), "whf", POISON, 3, LITERAL("whf\0aaaaaa") }));
-    EXPECT(test_single<const char*>({ LITERAL("aaaaaaaaaa"), "w%sf", "h", 3, LITERAL("whf\0aaaaaa") }));
+    EXPECT(test_single<char const*>({ LITERAL("Hello World!\0\0\0"), "Hello Friend!", POISON, 13, LITERAL("Hello Friend!\0\0") }));
+    EXPECT(test_single<char const*>({ LITERAL("Hello World!\0\0\0"), "Hello %s!", "Friend", 13, LITERAL("Hello Friend!\0\0") }));
+    EXPECT(test_single<char const*>({ LITERAL("aaaaaaaaaa"), "whf", POISON, 3, LITERAL("whf\0aaaaaa") }));
+    EXPECT(test_single<char const*>({ LITERAL("aaaaaaaaaa"), "w%sf", "h", 3, LITERAL("whf\0aaaaaa") }));
 }
 
 TEST_CASE(border_cases)
 {
-    EXPECT(test_single<const char*>({ LITERAL("Hello World!\0\0"), "Hello Friend!", POISON, 13, LITERAL("Hello Friend!\0") }));
-    EXPECT(test_single<const char*>({ LITERAL("AAAA"), "whf", POISON, 3, LITERAL("whf\0") }));
-    EXPECT(test_single<const char*>({ LITERAL("AAAA"), "%s", "whf", 3, LITERAL("whf\0") }));
+    EXPECT(test_single<char const*>({ LITERAL("Hello World!\0\0"), "Hello Friend!", POISON, 13, LITERAL("Hello Friend!\0") }));
+    EXPECT(test_single<char const*>({ LITERAL("AAAA"), "whf", POISON, 3, LITERAL("whf\0") }));
+    EXPECT(test_single<char const*>({ LITERAL("AAAA"), "%s", "whf", 3, LITERAL("whf\0") }));
 }
 
 TEST_CASE(too_long)
 {
-    EXPECT(test_single<const char*>({ LITERAL("Hello World!\0"), "Hello Friend!", POISON, 13, LITERAL("Hello Friend\0") }));
-    EXPECT(test_single<const char*>({ LITERAL("Hello World!\0"), "This source is %s too long!", "just *way*", 35, LITERAL("This source \0") }));
-    EXPECT(test_single<const char*>({ LITERAL("x"), "This source is %s too long!", "just *way*", 35, LITERAL("\0") }));
+    EXPECT(test_single<char const*>({ LITERAL("Hello World!\0"), "Hello Friend!", POISON, 13, LITERAL("Hello Friend\0") }));
+    EXPECT(test_single<char const*>({ LITERAL("Hello World!\0"), "This source is %s too long!", "just *way*", 35, LITERAL("This source \0") }));
+    EXPECT(test_single<char const*>({ LITERAL("x"), "This source is %s too long!", "just *way*", 35, LITERAL("\0") }));
 }
 
 TEST_CASE(special_cases)
 {
-    EXPECT(test_single<const char*>({ LITERAL(""), "Hello Friend!", POISON, 13, LITERAL("") }));
+    EXPECT(test_single<char const*>({ LITERAL(""), "Hello Friend!", POISON, 13, LITERAL("") }));
     EXPECT_EQ(snprintf(nullptr, 0, "Hello, friend!"), 14);
-    EXPECT(test_single<const char*>({ LITERAL(""), "", POISON, 0, LITERAL("") }));
-    EXPECT(test_single<const char*>({ LITERAL("x"), "", POISON, 0, LITERAL("\0") }));
-    EXPECT(test_single<const char*>({ LITERAL("xx"), "", POISON, 0, LITERAL("\0x") }));
-    EXPECT(test_single<const char*>({ LITERAL("xxx"), "", POISON, 0, LITERAL("\0xx") }));
-    EXPECT(test_single<const char*>({ LITERAL(""), "whf", POISON, 3, LITERAL("") }));
-    EXPECT(test_single<const char*>({ LITERAL("x"), "whf", POISON, 3, LITERAL("\0") }));
-    EXPECT(test_single<const char*>({ LITERAL("xx"), "whf", POISON, 3, LITERAL("w\0") }));
+    EXPECT(test_single<char const*>({ LITERAL(""), "", POISON, 0, LITERAL("") }));
+    EXPECT(test_single<char const*>({ LITERAL("x"), "", POISON, 0, LITERAL("\0") }));
+    EXPECT(test_single<char const*>({ LITERAL("xx"), "", POISON, 0, LITERAL("\0x") }));
+    EXPECT(test_single<char const*>({ LITERAL("xxx"), "", POISON, 0, LITERAL("\0xx") }));
+    EXPECT(test_single<char const*>({ LITERAL(""), "whf", POISON, 3, LITERAL("") }));
+    EXPECT(test_single<char const*>({ LITERAL("x"), "whf", POISON, 3, LITERAL("\0") }));
+    EXPECT(test_single<char const*>({ LITERAL("xx"), "whf", POISON, 3, LITERAL("w\0") }));
 }
 
 TEST_CASE(octal_values)
@@ -274,7 +275,22 @@ TEST_CASE(inttypes_macros)
     EXPECT(test_single<uint16_t>({ LITERAL("xxxxxxx"), "|%" PRIX16 "|", 0xC0DE, 6, LITERAL("|C0DE|\0") }));
 }
 
-TEST_CASE(float_values)
+TEST_CASE(float_value_precision)
+{
+    // An empty precision value implies a precision of 0.
+    EXPECT(test_single<double>({ LITERAL("xxx\0"), "|%.f|", 0, 3, LITERAL("|0|\0") }));
+    EXPECT(test_single<double>({ LITERAL("xxx\0"), "|%.f|", 1.23456789, 3, LITERAL("|1|\0") }));
+    EXPECT(test_single<double>({ LITERAL("xxx\0"), "|%.0f|", 0, 3, LITERAL("|0|\0") }));
+    EXPECT(test_single<double>({ LITERAL("xxx\0"), "|%.0f|", 1.23456789, 3, LITERAL("|1|\0") }));
+
+    // The default value for the precision is 6.
+    EXPECT(test_single<double>({ LITERAL("xxxxxxxxxx\0"), "|%f|", 0, 10, LITERAL("|0.000000|\0") }));
+    EXPECT(test_single<double>({ LITERAL("xxxxxxxxxx\0"), "|%f|", 1.23456789, 10, LITERAL("|1.234567|\0") }));
+    EXPECT(test_single<double>({ LITERAL("xxxxxxxxxx\0"), "|%.6f|", 0, 10, LITERAL("|0.000000|\0") }));
+    EXPECT(test_single<double>({ LITERAL("xxxxxxxxxx\0"), "|%.6f|", 1.23456789, 10, LITERAL("|1.234567|\0") }));
+}
+
+TEST_CASE(float_value_special)
 {
     union {
         float f;
@@ -288,4 +304,60 @@ TEST_CASE(float_values)
     v.i = 0x7f800000;
     EXPECT(test_single<double>({ LITERAL("xxxxxxx"), "|%4f|", v.f, 6, LITERAL("| inf|\0") }));
     EXPECT(test_single<double>({ LITERAL("xxxxxxx"), "|%4f|", -v.f, 6, LITERAL("|-inf|\0") }));
+}
+
+TEST_CASE(string_precision)
+{
+    // Print the entire string by default.
+    EXPECT(test_single<char const*>({ LITERAL("xxxxxx\0"), "|%s|", "WHF!", 6, LITERAL("|WHF!|\0") }));
+
+    // Precision limits the number of characters that are printed.
+    EXPECT(test_single<char const*>({ LITERAL("xxxx\0"), "|%.2s|", "WHF!", 4, LITERAL("|WH|\0") }));
+    EXPECT(test_single<char const*>({ LITERAL("xxxxxx\0"), "|%.7s|", "WHF!", 6, LITERAL("|WHF!|\0") }));
+
+    // An empty precision value implies a precision of 0.
+    EXPECT(test_single<char const*>({ LITERAL("xx\0"), "|%.s|", "WHF!", 2, LITERAL("||\0") }));
+}
+
+TEST_CASE(truncation)
+{
+    EXPECT(test_single<int>({ LITERAL("xxxxxxxxxxxxx"), "|%d|", INT_MAX, 12, LITERAL("|2147483647|\0") }));
+    EXPECT(test_single<int>({ LITERAL("xxxxxxxxxxxxxx"), "|%d|", INT_MIN, 13, LITERAL("|-2147483648|\0") }));
+
+    if constexpr (sizeof(long int) == 8) {
+        EXPECT(test_single<long int>({ LITERAL("xxxxxxxxxxxxxxxxxxxxxx"), "|%ld|", LONG_MAX, 21, LITERAL("|9223372036854775807|\0") }));
+        EXPECT(test_single<long int>({ LITERAL("xxxxxxxxxxxxxxxxxxxxxxx"), "|%ld|", LONG_MIN + 1, 22, LITERAL("|-9223372036854775807|\0") }));
+    } else {
+        EXPECT(test_single<long int>({ LITERAL("xxxxxxxxxxxxx"), "|%ld|", LONG_MAX, 12, LITERAL("|2147483647|\0") }));
+        EXPECT(test_single<long int>({ LITERAL("xxxxxxxxxxxxxx"), "|%ld|", LONG_MIN, 13, LITERAL("|-2147483648|\0") }));
+    }
+
+    EXPECT(test_single<long long int>({ LITERAL("xxxxxxxxxxxxxxxxxxxxxx"), "|%lld|", LLONG_MAX, 21, LITERAL("|9223372036854775807|\0") }));
+    EXPECT(test_single<long long int>({ LITERAL("xxxxxxxxxxxxxxxxxxxxxxx"), "|%lld|", LLONG_MIN + 1, 22, LITERAL("|-9223372036854775807|\0") }));
+
+    EXPECT(test_single<unsigned int>({ LITERAL("xxxxxxxxxxxxx"), "|%u|", UINT_MAX, 12, LITERAL("|4294967295|\0") }));
+    EXPECT(test_single<unsigned int>({ LITERAL("xxxxxxxxxxx"), "|%x|", UINT_MAX, 10, LITERAL("|ffffffff|\0") }));
+    EXPECT(test_single<unsigned int>({ LITERAL("xxxxxxxxxxx"), "|%X|", UINT_MAX, 10, LITERAL("|FFFFFFFF|\0") }));
+
+    if constexpr (sizeof(unsigned long int) == 8) {
+        EXPECT(test_single<unsigned long int>({ LITERAL("xxxxxxxxxxxxxxxxxxxxxxx"), "|%lu|", ULONG_MAX, 22, LITERAL("|18446744073709551615|\0") }));
+        EXPECT(test_single<unsigned long int>({ LITERAL("xxxxxxxxxxxxxxxxxxx"), "|%lx|", ULONG_MAX, 18, LITERAL("|ffffffffffffffff|\0") }));
+        EXPECT(test_single<unsigned long int>({ LITERAL("xxxxxxxxxxxxxxxxxxx"), "|%lX|", ULONG_MAX, 18, LITERAL("|FFFFFFFFFFFFFFFF|\0") }));
+    } else {
+        EXPECT(test_single<unsigned long int>({ LITERAL("xxxxxxxxxxxxx"), "|%lu|", ULONG_MAX, 12, LITERAL("|4294967295|\0") }));
+        EXPECT(test_single<unsigned long int>({ LITERAL("xxxxxxxxxxx"), "|%lx|", ULONG_MAX, 10, LITERAL("|ffffffff|\0") }));
+        EXPECT(test_single<unsigned long int>({ LITERAL("xxxxxxxxxxx"), "|%lX|", ULONG_MAX, 10, LITERAL("|FFFFFFFF|\0") }));
+    }
+
+    EXPECT(test_single<unsigned long long int>({ LITERAL("xxxxxxxxxxxxxxxxxxxxxxx"), "|%llu|", ULLONG_MAX, 22, LITERAL("|18446744073709551615|\0") }));
+    EXPECT(test_single<unsigned long long int>({ LITERAL("xxxxxxxxxxxxxxxxxxx"), "|%llx|", ULLONG_MAX, 18, LITERAL("|ffffffffffffffff|\0") }));
+    EXPECT(test_single<unsigned long long int>({ LITERAL("xxxxxxxxxxxxxxxxxxx"), "|%llX|", ULLONG_MAX, 18, LITERAL("|FFFFFFFFFFFFFFFF|\0") }));
+}
+
+TEST_CASE(g_format)
+{
+    EXPECT(test_single<double>({ LITERAL("xxxx"), "|%g|", 0.0, 3, LITERAL("|0|\0") }));
+    EXPECT(test_single<double>({ LITERAL("xxxx"), "|%g|", 1.0, 3, LITERAL("|1|\0") }));
+    EXPECT(test_single<double>({ LITERAL("xxxxxx"), "|%g|", 1.1, 5, LITERAL("|1.1|\0") }));
+    EXPECT(test_single<double>({ LITERAL("xxxxxxxx"), "|%g|", -1.12, 7, LITERAL("|-1.12|\0") }));
 }

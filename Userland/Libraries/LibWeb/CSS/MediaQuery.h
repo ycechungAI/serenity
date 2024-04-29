@@ -1,21 +1,20 @@
 /*
- * Copyright (c) 2021, Sam Atkins <atkinssj@serenityos.org>
+ * Copyright (c) 2021-2023, Sam Atkins <atkinssj@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/FlyString.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
 #include <AK/RefCounted.h>
 #include <LibWeb/CSS/GeneralEnclosed.h>
+#include <LibWeb/CSS/Length.h>
 #include <LibWeb/CSS/MediaFeatureID.h>
 #include <LibWeb/CSS/Ratio.h>
-#include <LibWeb/CSS/StyleValue.h>
+#include <LibWeb/CSS/Resolution.h>
 
 namespace Web::CSS {
 
@@ -198,8 +197,8 @@ struct MediaCondition {
     static NonnullOwnPtr<MediaCondition> from_general_enclosed(GeneralEnclosed&&);
     static NonnullOwnPtr<MediaCondition> from_feature(MediaFeature&&);
     static NonnullOwnPtr<MediaCondition> from_not(NonnullOwnPtr<MediaCondition>&&);
-    static NonnullOwnPtr<MediaCondition> from_and_list(NonnullOwnPtrVector<MediaCondition>&&);
-    static NonnullOwnPtr<MediaCondition> from_or_list(NonnullOwnPtrVector<MediaCondition>&&);
+    static NonnullOwnPtr<MediaCondition> from_and_list(Vector<NonnullOwnPtr<MediaCondition>>&&);
+    static NonnullOwnPtr<MediaCondition> from_or_list(Vector<NonnullOwnPtr<MediaCondition>>&&);
 
     MatchResult evaluate(HTML::Window const&) const;
     String to_string() const;
@@ -208,12 +207,12 @@ private:
     MediaCondition() = default;
     Type type;
     Optional<MediaFeature> feature;
-    NonnullOwnPtrVector<MediaCondition> conditions;
+    Vector<NonnullOwnPtr<MediaCondition>> conditions;
     Optional<GeneralEnclosed> general_enclosed;
 };
 
 class MediaQuery : public RefCounted<MediaQuery> {
-    friend class Parser;
+    friend class Parser::Parser;
 
 public:
     ~MediaQuery() = default;
@@ -223,6 +222,7 @@ public:
         All,
         Print,
         Screen,
+        Unknown,
 
         // Deprecated, must never match:
         TTY,
@@ -254,9 +254,12 @@ private:
     bool m_matches { false };
 };
 
-String serialize_a_media_query_list(NonnullRefPtrVector<MediaQuery> const&);
+String serialize_a_media_query_list(Vector<NonnullRefPtr<MediaQuery>> const&);
 
 bool is_media_feature_name(StringView name);
+
+MediaQuery::MediaType media_type_from_string(StringView);
+StringView to_string(MediaQuery::MediaType);
 
 }
 

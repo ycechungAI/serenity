@@ -12,34 +12,39 @@
 
 extern "C" {
 
-const char* inet_ntop(int af, const void* src, char* dst, socklen_t len)
+char const* inet_ntop(int af, void const* src, char* dst, socklen_t len)
 {
     if (af == AF_INET) {
         if (len < INET_ADDRSTRLEN) {
             errno = ENOSPC;
             return nullptr;
         }
-        auto* bytes = (const unsigned char*)src;
+        auto* bytes = (unsigned char const*)src;
         snprintf(dst, len, "%u.%u.%u.%u", bytes[0], bytes[1], bytes[2], bytes[3]);
-        return (const char*)dst;
+        return (char const*)dst;
     } else if (af == AF_INET6) {
         if (len < INET6_ADDRSTRLEN) {
             errno = ENOSPC;
             return nullptr;
         }
-        auto str = IPv6Address(((in6_addr const*)src)->s6_addr).to_string();
-        if (!str.copy_characters_to_buffer(dst, len)) {
+        auto str_or_error = IPv6Address(((in6_addr const*)src)->s6_addr).to_string();
+        if (str_or_error.is_error()) {
+            errno = ENOMEM;
+            return nullptr;
+        }
+        auto str = str_or_error.release_value();
+        if (!str.bytes_as_string_view().copy_characters_to_buffer(dst, len)) {
             errno = ENOSPC;
             return nullptr;
         }
-        return (const char*)dst;
+        return (char const*)dst;
     }
 
     errno = EAFNOSUPPORT;
     return nullptr;
 }
 
-int inet_pton(int af, const char* src, void* dst)
+int inet_pton(int af, char const* src, void* dst)
 {
     if (af == AF_INET) {
         unsigned a, b, c, d;
@@ -64,7 +69,7 @@ int inet_pton(int af, const char* src, void* dst)
         *(uint32_t*)dst = u.l;
         return 1;
     } else if (af == AF_INET6) {
-        auto addr = IPv6Address::from_string(src);
+        auto addr = IPv6Address::from_string({ src, strlen(src) });
         if (!addr.has_value()) {
             errno = EINVAL;
             return 0;
@@ -78,7 +83,7 @@ int inet_pton(int af, const char* src, void* dst)
     return -1;
 }
 
-in_addr_t inet_addr(const char* str)
+in_addr_t inet_addr(char const* str)
 {
     in_addr_t tmp {};
     int rc = inet_pton(AF_INET, str, &tmp);

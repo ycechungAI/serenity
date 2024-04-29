@@ -13,7 +13,7 @@
 namespace AK {
 
 template<typename TEndIterator, IteratorPairWith<TEndIterator> TIterator, typename TUnaryPredicate>
-constexpr TIterator find_if(TIterator first, TEndIterator last, TUnaryPredicate&& pred)
+[[nodiscard]] constexpr TIterator find_if(TIterator first, TEndIterator last, TUnaryPredicate&& pred)
 {
     for (; first != last; ++first) {
         if (pred(*first)) {
@@ -23,16 +23,17 @@ constexpr TIterator find_if(TIterator first, TEndIterator last, TUnaryPredicate&
     return last;
 }
 
-template<typename TEndIterator, IteratorPairWith<TEndIterator> TIterator, typename T>
-constexpr TIterator find(TIterator first, TEndIterator last, T const& value)
+template<typename TEndIterator, IteratorPairWith<TEndIterator> TIterator, typename V>
+[[nodiscard]] constexpr TIterator find(TIterator first, TEndIterator last, V const& value)
 {
-    return find_if(first, last, [&](auto const& v) { return Traits<T>::equals(value, v); });
+    return find_if(first, last, [&]<typename T>(T const& entry) { return Traits<T>::equals(entry, value); });
 }
 
-template<typename TEndIterator, IteratorPairWith<TEndIterator> TIterator, typename T>
-constexpr size_t find_index(TIterator first, TEndIterator last, T const& value) requires(requires(TIterator it) { it.index(); })
+template<typename TEndIterator, IteratorPairWith<TEndIterator> TIterator, typename V>
+[[nodiscard]] constexpr size_t find_index(TIterator first, TEndIterator last, V const& value)
+requires(requires(TIterator it) { it.index(); })
 {
-    return find_if(first, last, [&](auto const& v) { return Traits<T>::equals(value, v); }).index();
+    return find_if(first, last, [&]<typename T>(T const& entry) { return Traits<T>::equals(entry, value); }).index();
 }
 
 }

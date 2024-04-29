@@ -7,48 +7,53 @@
 #pragma once
 
 #include <AK/Badge.h>
-#include <AK/NonnullOwnPtrVector.h>
 #include <AK/String.h>
 #include <LibJS/Forward.h>
+#include <LibJS/Heap/Handle.h>
 
 namespace JS::Bytecode {
 
 struct UnwindInfo {
-    Executable const* executable;
-    BasicBlock const* handler;
-    BasicBlock const* finalizer;
+    JS::GCPtr<Executable const> executable;
+    JS::GCPtr<Environment> lexical_environment;
+
+    bool handler_called { false };
 };
 
 class BasicBlock {
     AK_MAKE_NONCOPYABLE(BasicBlock);
 
 public:
-    static NonnullOwnPtr<BasicBlock> create(String name, size_t size = 4 * KiB);
+    static NonnullOwnPtr<BasicBlock> create(String name);
     ~BasicBlock();
 
-    void seal();
-
     void dump(Executable const&) const;
-    ReadonlyBytes instruction_stream() const { return ReadonlyBytes { m_buffer, m_buffer_size }; }
-    size_t size() const { return m_buffer_size; }
+    ReadonlyBytes instruction_stream() const { return m_buffer.span(); }
+    u8* data() { return m_buffer.data(); }
+    u8 const* data() const { return m_buffer.data(); }
+    size_t size() const { return m_buffer.size(); }
 
-    void* next_slot() { return m_buffer + m_buffer_size; }
-    bool can_grow(size_t additional_size) const { return m_buffer_size + additional_size <= m_buffer_capacity; }
     void grow(size_t additional_size);
 
-    void terminate(Badge<Generator>) { m_is_terminated = true; }
-    bool is_terminated() const { return m_is_terminated; }
+    void terminate(Badge<Generator>) { m_terminated = true; }
+    bool is_terminated() const { return m_terminated; }
 
     String const& name() const { return m_name; }
 
-private:
-    BasicBlock(String name, size_t size);
+    void set_handler(BasicBlock const& handler) { m_handler = &handler; }
+    void set_finalizer(BasicBlock const& finalizer) { m_finalizer = &finalizer; }
 
-    u8* m_buffer { nullptr };
-    size_t m_buffer_capacity { 0 };
-    size_t m_buffer_size { 0 };
-    bool m_is_terminated { false };
+    BasicBlock const* handler() const { return m_handler; }
+    BasicBlock const* finalizer() const { return m_finalizer; }
+
+private:
+    explicit BasicBlock(String name);
+
+    Vector<u8> m_buffer;
+    BasicBlock const* m_handler { nullptr };
+    BasicBlock const* m_finalizer { nullptr };
     String m_name;
+    bool m_terminated { false };
 };
 
 }

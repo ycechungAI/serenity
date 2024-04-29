@@ -6,7 +6,7 @@
  */
 
 #include "TerminalWrapper.h"
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <LibCore/System.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
@@ -24,12 +24,12 @@
 
 namespace HackStudio {
 
-ErrorOr<void> TerminalWrapper::run_command(const String& command, Optional<String> working_directory, WaitForExit wait_for_exit, Optional<StringView> failure_message)
+ErrorOr<void> TerminalWrapper::run_command(ByteString const& command, Optional<ByteString> working_directory, WaitForExit wait_for_exit, Optional<StringView> failure_message)
 {
     if (m_pid != -1) {
         GUI::MessageBox::show(window(),
-            "A command is already running in this TerminalWrapper",
-            "Can't run command",
+            "A command is already running in this TerminalWrapper"sv,
+            "Can't run command"sv,
             GUI::MessageBox::Type::Error);
         return {};
     }
@@ -42,6 +42,8 @@ ErrorOr<void> TerminalWrapper::run_command(const String& command, Optional<Strin
     m_pid = TRY(Core::System::fork());
 
     if (m_pid > 0) {
+        m_terminal_widget->set_startup_process_id(m_pid);
+
         if (wait_for_exit == WaitForExit::Yes) {
             GUI::Application::the()->event_loop().spin_until([this]() {
                 return m_child_exited;
@@ -49,7 +51,7 @@ ErrorOr<void> TerminalWrapper::run_command(const String& command, Optional<Strin
 
             VERIFY(m_child_exit_status.has_value());
             if (m_child_exit_status.value() != 0)
-                return Error::from_string_literal(failure_message.value_or("Command execution failed"sv));
+                return Error::from_string_view(failure_message.value_or("Command execution failed"sv));
         }
 
         return {};
@@ -60,18 +62,9 @@ ErrorOr<void> TerminalWrapper::run_command(const String& command, Optional<Strin
 
     TRY(setup_slave_pseudoterminal(ptm_fd));
 
-    auto parts = command.split(' ');
-    VERIFY(!parts.is_empty());
-    const char** args = (const char**)calloc(parts.size() + 1, sizeof(const char*));
-    for (size_t i = 0; i < parts.size(); i++) {
-        args[i] = parts[i].characters();
-    }
-
-    auto rc = execvp(args[0], const_cast<char**>(args));
-    if (rc < 0) {
-        perror("execve");
-        exit(1);
-    }
+    auto args = command.split_view(' ');
+    VERIFY(!args.is_empty());
+    TRY(Core::System::exec(args[0], args, Core::System::SearchInPath::Yes));
     VERIFY_NOT_REACHED();
 }
 
@@ -101,11 +94,11 @@ ErrorOr<int> TerminalWrapper::setup_master_pseudoterminal(WaitForChildOnExit wai
             int wstatus = result.release_value().status;
 
             if (WIFEXITED(wstatus)) {
-                m_terminal_widget->inject_string(String::formatted("\033[{};1m(Command exited with code {})\033[0m\r\n", wstatus == 0 ? 32 : 31, WEXITSTATUS(wstatus)));
+                m_terminal_widget->inject_string(ByteString::formatted("\033[{};1m(Command exited with code {})\033[0m\r\n", wstatus == 0 ? 32 : 31, WEXITSTATUS(wstatus)));
             } else if (WIFSTOPPED(wstatus)) {
-                m_terminal_widget->inject_string("\033[34;1m(Command stopped!)\033[0m\r\n");
+                m_terminal_widget->inject_string("\033[34;1m(Command stopped!)\033[0m\r\n"sv);
             } else if (WIFSIGNALED(wstatus)) {
-                m_terminal_widget->inject_string(String::formatted("\033[34;1m(Command signaled with {}!)\033[0m\r\n", strsignal(WTERMSIG(wstatus))));
+                m_terminal_widget->inject_string(ByteString::formatted("\033[34;1m(Command signaled with {}!)\033[0m\r\n", strsignal(WTERMSIG(wstatus))));
             }
 
             m_child_exit_status = WEXITSTATUS(wstatus);

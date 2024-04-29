@@ -1,19 +1,39 @@
 #import <HTML/HTMLElement.idl>
 
+// https://html.spec.whatwg.org/multipage/embedded-content.html#htmlimageelement
+[Exposed=Window, LegacyFactoryFunction=Image(optional unsigned long width, optional unsigned long height)]
 interface HTMLImageElement : HTMLElement {
 
-    [Reflect] attribute DOMString src;
-    [Reflect] attribute DOMString alt;
-    [Reflect] attribute DOMString srcset;
-    [Reflect] attribute DOMString sizes;
-    [Reflect=usemap] attribute DOMString useMap;
-    [Reflect=ismap] attribute boolean isMap;
+    [HTMLConstructor] constructor();
 
-    [Reflect] attribute DOMString name;
-    [Reflect] attribute DOMString align;
-    [LegacyNullToEmptyString, Reflect] attribute DOMString border;
-
+    [CEReactions, Reflect] attribute DOMString alt;
+    [CEReactions, Reflect] attribute DOMString src;
+    [CEReactions, Reflect] attribute DOMString srcset;
+    [CEReactions, Reflect] attribute DOMString sizes;
+    // FIXME: [CEReactions] attribute DOMString? crossOrigin;
+    [CEReactions, Reflect=usemap] attribute DOMString useMap;
+    [CEReactions, Reflect=ismap] attribute boolean isMap;
     [CEReactions] attribute unsigned long width;
     [CEReactions] attribute unsigned long height;
+    readonly attribute unsigned long naturalWidth;
+    readonly attribute unsigned long naturalHeight;
+    readonly attribute boolean complete;
+    // FIXME: readonly attribute USVString currentSrc;
+    // FIXME: [CEReactions] attribute DOMString referrerPolicy;
+    // FIXME: [CEReactions] attribute DOMString decoding;
+    // FIXME: [CEReactions] attribute DOMString loading;
+    // FIXME: [CEReactions] attribute DOMString fetchPriority;
+
+    // FIXME: Promise<undefined> decode();
+
+    // Obsolete
+    [CEReactions, Reflect] attribute DOMString name;
+    // FIXME: [CEReactions] attribute USVString lowsrc;
+    [CEReactions, Reflect] attribute DOMString align;
+    // FIXME: [CEReactions] attribute unsigned long hspace;
+    // FIXME: [CEReactions] attribute unsigned long vspace;
+    // FIXME: [CEReactions] attribute USVString longDesc;
+
+    [CEReactions, LegacyNullToEmptyString, Reflect] attribute DOMString border;
 
 };

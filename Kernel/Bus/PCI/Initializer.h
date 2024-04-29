@@ -6,13 +6,13 @@
 
 #pragma once
 
-namespace Kernel {
-namespace PCI {
+#include <AK/SetOnce.h>
 
-extern bool g_pci_access_io_probe_failed;
-extern bool g_pci_access_is_disabled_from_commandline;
+namespace Kernel::PCI {
+
+extern SetOnce g_pci_access_io_probe_failed;
+extern SetOnce g_pci_access_is_disabled_from_commandline;
 
 void initialize();
 
-}
 }

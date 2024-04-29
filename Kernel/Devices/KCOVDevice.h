@@ -14,27 +14,24 @@ class KCOVDevice final : public BlockDevice {
     friend class DeviceManagement;
 
 public:
-    static HashMap<ProcessID, KCOVInstance*>* proc_instance;
-    static HashMap<ThreadID, KCOVInstance*>* thread_instance;
-
-    static NonnullRefPtr<KCOVDevice> must_create();
+    static NonnullLockRefPtr<KCOVDevice> must_create();
     static void free_thread();
     static void free_process();
 
     // ^File
-    ErrorOr<Memory::Region*> mmap(Process&, OpenFileDescription&, Memory::VirtualRange const&, u64 offset, int prot, bool shared) override;
-    ErrorOr<NonnullRefPtr<OpenFileDescription>> open(int options) override;
+    ErrorOr<NonnullLockRefPtr<Memory::VMObject>> vmobject_for_mmap(Process&, Memory::VirtualRange const&, u64& offset, bool shared) override;
+    virtual ErrorOr<NonnullRefPtr<OpenFileDescription>> open(int options) override;
 
 protected:
     KCOVDevice();
 
     virtual StringView class_name() const override { return "KCOVDevice"sv; }
 
-    virtual bool can_read(const OpenFileDescription&, u64) const override final { return true; }
-    virtual bool can_write(const OpenFileDescription&, u64) const override final { return true; }
+    virtual bool can_read(OpenFileDescription const&, u64) const override final { return true; }
+    virtual bool can_write(OpenFileDescription const&, u64) const override final { return true; }
     virtual void start_request(AsyncBlockDeviceRequest& request) override final { request.complete(AsyncDeviceRequest::Failure); }
     virtual ErrorOr<size_t> read(OpenFileDescription&, u64, UserOrKernelBuffer&, size_t) override { return EINVAL; }
-    virtual ErrorOr<size_t> write(OpenFileDescription&, u64, const UserOrKernelBuffer&, size_t) override { return EINVAL; }
+    virtual ErrorOr<size_t> write(OpenFileDescription&, u64, UserOrKernelBuffer const&, size_t) override { return EINVAL; }
     virtual ErrorOr<void> ioctl(OpenFileDescription&, unsigned request, Userspace<void*> arg) override;
 };
 

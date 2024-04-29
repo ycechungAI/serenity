@@ -6,72 +6,70 @@
  */
 
 #include <Kernel/Bus/VirtIO/Console.h>
+#include <Kernel/Bus/VirtIO/Transport/PCIe/TransportLink.h>
 #include <Kernel/Devices/DeviceManagement.h>
 #include <Kernel/Sections.h>
-#include <Kernel/WorkQueue.h>
+#include <Kernel/Tasks/WorkQueue.h>
 
 namespace Kernel::VirtIO {
 
 unsigned Console::next_device_id = 0;
 
-UNMAP_AFTER_INIT NonnullRefPtr<Console> Console::must_create(PCI::DeviceIdentifier const& pci_device_identifier)
+UNMAP_AFTER_INIT NonnullLockRefPtr<Console> Console::must_create_for_pci_instance(PCI::DeviceIdentifier const& pci_device_identifier)
 {
-    return adopt_ref_if_nonnull(new Console(pci_device_identifier)).release_nonnull();
+    auto pci_transport_link = MUST(PCIeTransportLink::create(pci_device_identifier));
+    return adopt_lock_ref_if_nonnull(new (nothrow) Console(move(pci_transport_link))).release_nonnull();
 }
 
-UNMAP_AFTER_INIT void Console::initialize()
+UNMAP_AFTER_INIT ErrorOr<void> Console::initialize_virtio_resources()
 {
-    Device::initialize();
-    if (auto const* cfg = get_config(ConfigurationType::Device)) {
-        bool success = negotiate_features([&](u64 supported_features) {
-            u64 negotiated = 0;
-            if (is_feature_set(supported_features, VIRTIO_CONSOLE_F_SIZE))
-                dbgln("VirtIO::Console: Console size is not yet supported!");
-            if (is_feature_set(supported_features, VIRTIO_CONSOLE_F_MULTIPORT))
-                negotiated |= VIRTIO_CONSOLE_F_MULTIPORT;
-            return negotiated;
-        });
-        if (success) {
-            u32 max_nr_ports = 0;
-            u16 cols = 0, rows = 0;
-            read_config_atomic([&]() {
-                if (is_feature_accepted(VIRTIO_CONSOLE_F_SIZE)) {
-                    cols = config_read16(*cfg, 0x0);
-                    rows = config_read16(*cfg, 0x2);
-                }
-                if (is_feature_accepted(VIRTIO_CONSOLE_F_MULTIPORT)) {
-                    max_nr_ports = config_read32(*cfg, 0x4);
-                    m_ports.resize(max_nr_ports);
-                }
-            });
-            dbgln("VirtIO::Console: cols: {}, rows: {}, max nr ports {}", cols, rows, max_nr_ports);
-            // Base receiveq/transmitq for port0 + optional control queues and 2 per every additional port
-            success = setup_queues(2 + max_nr_ports > 0 ? 2 + 2 * max_nr_ports : 0);
+    TRY(Device::initialize_virtio_resources());
+    auto const* cfg = TRY(transport_entity().get_config(VirtIO::ConfigurationType::Device));
+    TRY(negotiate_features([&](u64 supported_features) {
+        u64 negotiated = 0;
+        if (is_feature_set(supported_features, VIRTIO_CONSOLE_F_SIZE))
+            dbgln("VirtIO::Console: Console size is not yet supported!");
+        if (is_feature_set(supported_features, VIRTIO_CONSOLE_F_MULTIPORT))
+            negotiated |= VIRTIO_CONSOLE_F_MULTIPORT;
+        return negotiated;
+    }));
+    u32 max_nr_ports = 0;
+    u16 cols = 0, rows = 0;
+    transport_entity().read_config_atomic([&]() {
+        if (is_feature_accepted(VIRTIO_CONSOLE_F_SIZE)) {
+            cols = transport_entity().config_read16(*cfg, 0x0);
+            rows = transport_entity().config_read16(*cfg, 0x2);
         }
-        if (success) {
-            finish_init();
+        if (is_feature_accepted(VIRTIO_CONSOLE_F_MULTIPORT)) {
+            max_nr_ports = transport_entity().config_read32(*cfg, 0x4);
+            m_ports.resize(max_nr_ports);
+        }
+    });
+    dbgln("VirtIO::Console: cols: {}, rows: {}, max nr ports {}", cols, rows, max_nr_ports);
+    // Base receiveq/transmitq for port0 + optional control queues and 2 per every additional port
+    TRY(setup_queues(2 + max_nr_ports > 0 ? 2 + 2 * max_nr_ports : 0));
+    finish_init();
 
-            if (is_feature_accepted(VIRTIO_CONSOLE_F_MULTIPORT)) {
-                setup_multiport();
-            } else {
-                auto port = MUST(DeviceManagement::the().try_create_device<VirtIO::ConsolePort>(0u, *this));
-                port->init_receive_buffer({});
-                m_ports.append(port);
-            }
-        }
+    if (is_feature_accepted(VIRTIO_CONSOLE_F_MULTIPORT)) {
+        setup_multiport();
+    } else {
+        auto port = TRY(DeviceManagement::the().try_create_device<VirtIO::ConsolePort>(0u, *this));
+        port->init_receive_buffer({});
+        m_ports.append(port);
     }
+    return {};
 }
 
-UNMAP_AFTER_INIT Console::Console(PCI::DeviceIdentifier const& pci_device_identifier)
-    : VirtIO::Device(pci_device_identifier)
+UNMAP_AFTER_INIT Console::Console(NonnullOwnPtr<TransportEntity> transport_entity)
+    : VirtIO::Device(move(transport_entity))
     , m_device_id(next_device_id++)
 {
 }
 
-bool Console::handle_device_config_change()
+ErrorOr<void> Console::handle_device_config_change()
 {
     dbgln("VirtIO::Console: Handle device config change");
-    return true;
+    return {};
 }
 
 void Console::handle_queue_update(u16 queue_index)
@@ -151,7 +149,8 @@ void Console::process_control_message(ControlMessage message)
 {
     switch (message.event) {
     case (u16)ControlEvent::DeviceAdd: {
-        g_io_work->queue([message, this]() -> void {
+        // FIXME: Do something sanely here if we can't allocate a work queue?
+        MUST(g_io_work->try_queue([message, this]() -> void {
             u32 id = message.id;
             if (id >= m_ports.size()) {
                 dbgln("Device provided an invalid port number {}. max_nr_ports: {}", id, m_ports.size());
@@ -172,7 +171,7 @@ void Console::process_control_message(ControlMessage message)
                 .value = (u16)ControlMessage::Status::Success
             };
             write_control_message(ready_event);
-        });
+        }));
 
         break;
     }

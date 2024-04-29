@@ -141,7 +141,7 @@ ErrorOr<void, ValidationError> AbstractMachine::validate(Module& module)
 InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<ExternValue> externs)
 {
     if (auto result = validate(const_cast<Module&>(module)); result.is_error())
-        return InstantiationError { String::formatted("Validation failed: {}", result.error()) };
+        return InstantiationError { ByteString::formatted("Validation failed: {}", result.error()) };
 
     auto main_module_instance_pointer = make<ModuleInstance>();
     auto& main_module_instance = *main_module_instance_pointer;
@@ -162,7 +162,17 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
             auxiliary_instance.globals().append(*ptr);
     }
 
-    BytecodeInterpreter interpreter;
+    Vector<FunctionAddress> module_functions;
+    module_functions.ensure_capacity(module.functions().size());
+
+    for (auto& func : module.functions()) {
+        auto address = m_store.allocate(main_module_instance, func);
+        VERIFY(address.has_value());
+        auxiliary_instance.functions().append(*address);
+        module_functions.append(*address);
+    }
+
+    BytecodeInterpreter interpreter(m_stack_info);
 
     module.for_each_section_of_type<GlobalSection>([&](auto& global_section) {
         for (auto& entry : global_section.entries()) {
@@ -175,9 +185,9 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                 entry.expression(),
                 1,
             });
-            auto result = config.execute(interpreter);
+            auto result = config.execute(interpreter).assert_wasm_result();
             if (result.is_trap())
-                instantiation_result = InstantiationError { String::formatted("Global value construction trapped: {}", result.trap().reason) };
+                instantiation_result = InstantiationError { ByteString::formatted("Global value construction trapped: {}", result.trap().reason) };
             else
                 global_values.append(result.values().first());
         }
@@ -186,7 +196,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
     if (instantiation_result.has_value())
         return instantiation_result.release_value();
 
-    if (auto result = allocate_all_initial_phase(module, main_module_instance, externs, global_values); result.has_value())
+    if (auto result = allocate_all_initial_phase(module, main_module_instance, externs, global_values, module_functions); result.has_value())
         return result.release_value();
 
     module.for_each_section_of_type<ElementSection>([&](ElementSection const& section) {
@@ -202,9 +212,9 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                     entry,
                     entry.instructions().size(),
                 });
-                auto result = config.execute(interpreter);
+                auto result = config.execute(interpreter).assert_wasm_result();
                 if (result.is_trap()) {
-                    instantiation_result = InstantiationError { String::formatted("Element construction trapped: {}", result.trap().reason) };
+                    instantiation_result = InstantiationError { ByteString::formatted("Element construction trapped: {}", result.trap().reason) };
                     return IterationDecision::Continue;
                 }
 
@@ -255,9 +265,9 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                 active_ptr->expression,
                 1,
             });
-            auto result = config.execute(interpreter);
+            auto result = config.execute(interpreter).assert_wasm_result();
             if (result.is_trap()) {
-                instantiation_result = InstantiationError { String::formatted("Element section initialisation trapped: {}", result.trap().reason) };
+                instantiation_result = InstantiationError { ByteString::formatted("Element section initialisation trapped: {}", result.trap().reason) };
                 return IterationDecision::Break;
             }
             auto d = result.values().first().to<i32>();
@@ -315,20 +325,21 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                         data.offset,
                         1,
                     });
-                    auto result = config.execute(interpreter);
+                    auto result = config.execute(interpreter).assert_wasm_result();
                     if (result.is_trap()) {
-                        instantiation_result = InstantiationError { String::formatted("Data section initialisation trapped: {}", result.trap().reason) };
+                        instantiation_result = InstantiationError { ByteString::formatted("Data section initialisation trapped: {}", result.trap().reason) };
                         return;
                     }
                     size_t offset = 0;
                     result.values().first().value().visit(
                         [&](auto const& value) { offset = value; },
+                        [&](u128 const&) { instantiation_result = InstantiationError { "Data segment offset returned a vector type"sv }; },
                         [&](Reference const&) { instantiation_result = InstantiationError { "Data segment offset returned a reference"sv }; });
                     if (instantiation_result.has_value() && instantiation_result->is_error())
                         return;
                     if (main_module_instance.memories().size() <= data.index.value()) {
                         instantiation_result = InstantiationError {
-                            String::formatted("Data segment referenced out-of-bounds memory ({}) of max {} entries",
+                            ByteString::formatted("Data segment referenced out-of-bounds memory ({}) of max {} entries",
                                 data.index.value(), main_module_instance.memories().size())
                         };
                         return;
@@ -345,9 +356,9 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
                     auto address = main_module_instance.memories()[data.index.value()];
                     if (auto instance = m_store.get(address)) {
                         if (auto max = instance->type().limits().max(); max.has_value()) {
-                            if (*max < data.init.size() + offset) {
+                            if (*max * Constants::page_size < data.init.size() + offset) {
                                 instantiation_result = InstantiationError {
-                                    String::formatted("Data segment attempted to write to out-of-bounds memory ({}) of max {} bytes",
+                                    ByteString::formatted("Data segment attempted to write to out-of-bounds memory ({}) of max {} bytes",
                                         data.init.size() + offset, instance->type().limits().max().value())
                                 };
                                 return;
@@ -373,7 +384,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
         auto& functions = main_module_instance.functions();
         auto index = section.function().index();
         if (functions.size() <= index.value()) {
-            instantiation_result = InstantiationError { String::formatted("Start section function referenced invalid index {} of max {} entries", index.value(), functions.size()) };
+            instantiation_result = InstantiationError { ByteString::formatted("Start section function referenced invalid index {} of max {} entries", index.value(), functions.size()) };
             return;
         }
         invoke(functions[index.value()], {});
@@ -385,7 +396,7 @@ InstantiationResult AbstractMachine::instantiate(Module const& module, Vector<Ex
     return InstantiationResult { move(main_module_instance_pointer) };
 }
 
-Optional<InstantiationError> AbstractMachine::allocate_all_initial_phase(Module const& module, ModuleInstance& module_instance, Vector<ExternValue>& externs, Vector<Value>& global_values)
+Optional<InstantiationError> AbstractMachine::allocate_all_initial_phase(Module const& module, ModuleInstance& module_instance, Vector<ExternValue>& externs, Vector<Value>& global_values, Vector<FunctionAddress>& own_functions)
 {
     Optional<InstantiationError> result;
 
@@ -397,13 +408,9 @@ Optional<InstantiationError> AbstractMachine::allocate_all_initial_phase(Module 
             [&](GlobalAddress const& address) { module_instance.globals().append(address); });
     }
 
-    // FIXME: What if this fails?
+    module_instance.functions().extend(own_functions);
 
-    for (auto& func : module.functions()) {
-        auto address = m_store.allocate(module_instance, func);
-        VERIFY(address.has_value());
-        module_instance.functions().append(*address);
-    }
+    // FIXME: What if this fails?
 
     module.for_each_section_of_type<TableSection>([&](TableSection const& section) {
         for (auto& table : section.tables()) {
@@ -491,7 +498,7 @@ Optional<InstantiationError> AbstractMachine::allocate_all_final_phase(Module co
 
 Result AbstractMachine::invoke(FunctionAddress address, Vector<Value> arguments)
 {
-    BytecodeInterpreter interpreter;
+    BytecodeInterpreter interpreter(m_stack_info);
     return invoke(interpreter, address, move(arguments));
 }
 
@@ -544,7 +551,7 @@ void Linker::link(HashMap<Linker::Name, ExternValue> const& exports)
         m_unresolved_imports.remove(entry);
 }
 
-AK::Result<Vector<ExternValue>, LinkError> Linker::finish()
+AK::ErrorOr<Vector<ExternValue>, LinkError> Linker::finish()
 {
     populate();
     if (!m_unresolved_imports.is_empty()) {

@@ -3,20 +3,21 @@ set(LOADER_SOURCES
     misc.cpp
 )
 
-file(GLOB AK_SOURCES "../../AK/*.cpp")
-file(GLOB ELF_SOURCES "../Libraries/LibELF/*.cpp")
+add_library(DynamicLoader_CompileOptions INTERFACE)
+target_compile_options(DynamicLoader_CompileOptions INTERFACE -fno-rtti -fpie)
+target_link_options(DynamicLoader_CompileOptions INTERFACE -nostdlib -fpie)
+target_compile_definitions(DynamicLoader_CompileOptions INTERFACE NO_TLS)
+add_dependencies(DynamicLoader_CompileOptions install_libc_headers)
+
 file(GLOB LIBC_SOURCES1 "../Libraries/LibC/*.cpp")
 file(GLOB LIBC_SOURCES2 "../Libraries/LibC/*/*.cpp")
 
-if ("${SERENITY_ARCH}" STREQUAL "aarch64")
-    file(GLOB LIBC_SOURCES3 "../Libraries/LibC/arch/aarch64/*.S")
-    set(ELF_SOURCES ${ELF_SOURCES} ../Libraries/LibELF/Arch/aarch64/entry.S ../Libraries/LibELF/Arch/aarch64/plt_trampoline.S)
-elseif ("${SERENITY_ARCH}" STREQUAL "i686")
-    file(GLOB LIBC_SOURCES3 "../Libraries/LibC/arch/i386/*.S")
-    set(ELF_SOURCES ${ELF_SOURCES} ../Libraries/LibELF/Arch/i386/entry.S ../Libraries/LibELF/Arch/i386/plt_trampoline.S)
-elseif ("${SERENITY_ARCH}" STREQUAL "x86_64")
-    file(GLOB LIBC_SOURCES3 "../Libraries/LibC/arch/x86_64/*.S")
-    set(ELF_SOURCES ${ELF_SOURCES} ../Libraries/LibELF/Arch/x86_64/entry.S ../Libraries/LibELF/Arch/x86_64/plt_trampoline.S)
+set(ARCH_FOLDER "${SERENITY_ARCH}")
+
+file(GLOB LIBC_SOURCES3 "../Libraries/LibC/arch/${ARCH_FOLDER}/*.S")
+set(LIBC_SOURCES3 ${LIBC_SOURCES3} "../Libraries/LibC/arch/${ARCH_FOLDER}/fenv.cpp")
+if ("${SERENITY_ARCH}" STREQUAL "x86_64")
+    set(LIBC_SOURCES3 ${LIBC_SOURCES3} "../Libraries/LibC/arch/x86_64/memset.cpp")
 endif()
 
 file(GLOB LIBSYSTEM_SOURCES "../Libraries/LibSystem/*.cpp")
@@ -25,19 +26,31 @@ if (ENABLE_UNDEFINED_SANITIZER)
     set(LOADER_SOURCES ${LOADER_SOURCES} ../Libraries/LibSanitizer/UBSanitizer.cpp)
 endif()
 
+# pthread requires thread local storage, which DynamicLoader does not have.
+list(FILTER LIBC_SOURCES1 EXCLUDE REGEX ".*/LibC/(pthread|semaphore)\\.cpp")
+
 add_definitions(-D_DYNAMIC_LOADER)
 
-set(SOURCES ${LOADER_SOURCES} ${AK_SOURCES} ${ELF_SOURCES} ${LIBC_SOURCES1} ${LIBC_SOURCES2} ${LIBC_SOURCES3} ${LIBSYSTEM_SOURCES})
+set(SOURCES ${LOADER_SOURCES} ${AK_SOURCES} ${LIBC_SOURCES1} ${LIBC_SOURCES2} ${LIBC_SOURCES3} ${LIBSYSTEM_SOURCES})
 
-# FIXME: remove -nodefaultlibs after the next toolchain update
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti -nodefaultlibs -nostdlib -pie -fpic -DNO_TLS")
+if (("${SERENITY_ARCH}" STREQUAL "aarch64") OR ("${SERENITY_ARCH}" STREQUAL "riscv64"))
+    # On aarch64 and riscv64 the stack protector would be accessed before the Loader can relocate itself.
+    set_source_files_properties(main.cpp PROPERTIES COMPILE_FLAGS "-fno-stack-protector")
+endif()
 
-set_source_files_properties (../Libraries/LibC/ssp.cpp PROPERTIES COMPILE_FLAGS
-    "-fno-stack-protector")
+set_source_files_properties(../Libraries/LibC/ssp.cpp PROPERTIES COMPILE_FLAGS "-fno-stack-protector")
+set_source_files_properties(../Libraries/LibC/ssp_nonshared.cpp PROPERTIES COMPILE_FLAGS "-fno-stack-protector")
 # Prevent GCC from removing null checks by marking the `FILE*` argument non-null
 set_source_files_properties(../Libraries/LibC/stdio.cpp PROPERTIES COMPILE_FLAGS "-fno-builtin-fputc -fno-builtin-fputs -fno-builtin-fwrite")
 
+# Prevent naively implemented string functions (like strlen) from being "optimized" into a call to themselves.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set_source_files_properties(../Libraries/LibC/string.cpp ../Libraries/LibC/wchar.cpp
+        PROPERTIES COMPILE_FLAGS "-fno-tree-loop-distribution -fno-tree-loop-distribute-patterns")
+endif()
+
 add_executable(Loader.so ${SOURCES})
+add_dependencies(Loader.so install_libc_headers)
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_link_libraries(Loader.so PRIVATE gcc)
@@ -45,6 +58,9 @@ elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang$")
     target_link_libraries(Loader.so PRIVATE clang_rt.builtins)
 endif ()
 
-target_link_libraries(Loader.so PRIVATE LibTimeZone)
+target_link_libraries(Loader.so PRIVATE DynamicLoader_CompileOptions DynamicLoader_LibELF LibTimeZone)
 target_link_options(Loader.so PRIVATE LINKER:--no-dynamic-linker)
+# Don't confuse the coverage results by instrumenting Loader
+target_link_libraries(Loader.so PRIVATE NoCoverage)
+
 install(TARGETS Loader.so RUNTIME DESTINATION usr/lib/)

@@ -7,10 +7,11 @@
 #include <AK/Assertions.h>
 #include <AK/CharacterTypes.h>
 #include <AK/GenericLexer.h>
+#include <AK/ScopeGuard.h>
 #include <AK/StringBuilder.h>
 
 #ifndef KERNEL
-#    include <AK/String.h>
+#    include <AK/ByteString.h>
 #    include <AK/Utf16View.h>
 #endif
 
@@ -69,7 +70,7 @@ StringView GenericLexer::consume_until(char stop)
 }
 
 // Consume and return characters until the string `stop` is found
-StringView GenericLexer::consume_until(const char* stop)
+StringView GenericLexer::consume_until(char const* stop)
 {
     size_t start = m_index;
     while (!is_eof() && !next_is(stop))
@@ -128,8 +129,89 @@ StringView GenericLexer::consume_quoted_string(char escape_char)
     return m_input.substring_view(start, length);
 }
 
+template<Integral T>
+ErrorOr<T> GenericLexer::consume_decimal_integer()
+{
+    using UnsignedT = MakeUnsigned<T>;
+
+    ArmedScopeGuard rollback { [&, rollback_position = m_index] {
+        m_index = rollback_position;
+    } };
+
+    bool has_minus_sign = false;
+
+    if (next_is('+') || next_is('-'))
+        if (consume() == '-')
+            has_minus_sign = true;
+
+    StringView number_view = consume_while(is_ascii_digit);
+    if (number_view.is_empty())
+        return Error::from_errno(EINVAL);
+
+    auto maybe_number = StringUtils::convert_to_uint<UnsignedT>(number_view, TrimWhitespace::No);
+    if (!maybe_number.has_value())
+        return Error::from_errno(ERANGE);
+    auto number = maybe_number.value();
+
+    if (!has_minus_sign) {
+        if (NumericLimits<T>::max() < number) // This is only possible in a signed case.
+            return Error::from_errno(ERANGE);
+
+        rollback.disarm();
+        return number;
+    } else {
+        if constexpr (IsUnsigned<T>) {
+            if (number == 0) {
+                rollback.disarm();
+                return 0;
+            }
+            return Error::from_errno(ERANGE);
+        } else {
+            static constexpr UnsignedT max_value = static_cast<UnsignedT>(NumericLimits<T>::max()) + 1;
+            if (number > max_value)
+                return Error::from_errno(ERANGE);
+            rollback.disarm();
+            return -number;
+        }
+    }
+}
+
+LineTrackingLexer::Position LineTrackingLexer::position_for(size_t index) const
+{
+    auto& [cached_index, cached_line, cached_column] = m_cached_position;
+
+    if (cached_index <= index) {
+        for (size_t i = cached_index; i < index; ++i) {
+            if (m_input[i] == '\n')
+                ++cached_line, cached_column = 0;
+            else
+                ++cached_column;
+        }
+    } else {
+        auto lines_backtracked = m_input.substring_view(index, cached_index - index).count('\n');
+        cached_line -= lines_backtracked;
+        if (lines_backtracked == 0) {
+            cached_column -= cached_index - index;
+        } else {
+            auto current_line_start = m_input.substring_view(0, index).find_last('\n').value_or(0);
+            cached_column = index - current_line_start;
+        }
+    }
+    cached_index = index;
+    return m_cached_position;
+}
+
+template ErrorOr<u8> GenericLexer::consume_decimal_integer<u8>();
+template ErrorOr<i8> GenericLexer::consume_decimal_integer<i8>();
+template ErrorOr<u16> GenericLexer::consume_decimal_integer<u16>();
+template ErrorOr<i16> GenericLexer::consume_decimal_integer<i16>();
+template ErrorOr<u32> GenericLexer::consume_decimal_integer<u32>();
+template ErrorOr<i32> GenericLexer::consume_decimal_integer<i32>();
+template ErrorOr<u64> GenericLexer::consume_decimal_integer<u64>();
+template ErrorOr<i64> GenericLexer::consume_decimal_integer<i64>();
+
 #ifndef KERNEL
-String GenericLexer::consume_and_unescape_string(char escape_char)
+Optional<ByteString> GenericLexer::consume_and_unescape_string(char escape_char)
 {
     auto view = consume_quoted_string(escape_char);
     if (view.is_null())
@@ -138,7 +220,7 @@ String GenericLexer::consume_and_unescape_string(char escape_char)
     StringBuilder builder;
     for (size_t i = 0; i < view.length(); ++i)
         builder.append(consume_escaped_character(escape_char));
-    return builder.to_string();
+    return builder.to_byte_string();
 }
 
 auto GenericLexer::consume_escaped_code_point(bool combine_surrogate_pairs) -> Result<u32, UnicodeEscapeError>

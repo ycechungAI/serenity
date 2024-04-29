@@ -8,7 +8,6 @@
 #include <LibCore/DirIterator.h>
 #include <LibCore/System.h>
 #include <LibMain/Main.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -17,43 +16,59 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     TRY(Core::System::pledge("stdio rpath exec"));
 
     bool ignore_env = false;
-    const char* split_string = nullptr;
-    Vector<const char*> values;
+    StringView split_string {};
+    Vector<ByteString> values_to_set;
+    Vector<ByteString> values_to_unset;
 
     Core::ArgsParser args_parser;
     args_parser.set_stop_on_first_non_option(true);
 
     args_parser.add_option(ignore_env, "Start with an empty environment", "ignore-environment", 'i');
     args_parser.add_option(split_string, "Process and split S into separate arguments; used to pass multiple arguments on shebang lines", "split-string", 'S', "S");
+    args_parser.add_option(Core::ArgsParser::Option {
+        .argument_mode = Core::ArgsParser::OptionArgumentMode::Required,
+        .help_string = "Remove variable from the environment",
+        .long_name = "unset",
+        .short_name = 'u',
+        .value_name = "name",
+        .accept_value = [&values_to_unset](StringView value) {
+            values_to_unset.append(value);
+            return true;
+        },
+    });
 
-    args_parser.add_positional_argument(values, "Environment and commands", "env/command", Core::ArgsParser::Required::No);
+    args_parser.add_positional_argument(values_to_set, "Environment and commands", "env/command", Core::ArgsParser::Required::No);
     args_parser.parse(arguments);
 
-    if (ignore_env)
+    if (ignore_env) {
         clearenv();
+    } else {
+        for (auto const& value : values_to_unset) {
+            if (unsetenv(value.characters()) < 0) {
+                warnln("env: cannot unset '{}': {}", value, strerror(errno));
+                return 1;
+            }
+        }
+    }
 
     size_t argv_start;
-    for (argv_start = 0; argv_start < values.size(); ++argv_start) {
-        if (StringView { values[argv_start] }.contains('=')) {
-            putenv(const_cast<char*>(values[argv_start]));
+    for (argv_start = 0; argv_start < values_to_set.size(); ++argv_start) {
+        if (values_to_set[argv_start].contains('=')) {
+            putenv(const_cast<char*>(values_to_set[argv_start].characters()));
         } else {
             break;
         }
     }
 
-    Vector<String> split_string_storage;
-    Vector<const char*> new_argv;
-    if (split_string) {
-        for (auto view : StringView(split_string).split_view(' ')) {
-            split_string_storage.append(view);
-        }
-        for (auto& str : split_string_storage) {
-            new_argv.append(str.characters());
+    Vector<StringView> new_argv;
+    if (!split_string.is_empty()) {
+        for (auto view : split_string.split_view(' ')) {
+            new_argv.append(view);
         }
     }
 
-    for (size_t i = argv_start; i < values.size(); ++i) {
-        new_argv.append(values[i]);
+    for (size_t i = argv_start; i < values_to_set.size(); ++i) {
+        new_argv.append(values_to_set[i]);
     }
 
     if (new_argv.size() == 0) {
@@ -63,12 +78,6 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
         return 0;
     }
 
-    new_argv.append(nullptr);
-
-    const char* executable = new_argv[0];
-    char* const* new_argv_ptr = const_cast<char* const*>(&new_argv[0]);
-
-    execvp(executable, new_argv_ptr);
-    perror("execvp");
+    TRY(Core::System::exec(new_argv[0], new_argv, Core::System::SearchInPath::Yes));
     return 1;
 }

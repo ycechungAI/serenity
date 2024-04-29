@@ -7,10 +7,6 @@
 #pragma once
 
 #include <Kernel/Devices/CharacterDevice.h>
-#include <Kernel/Interrupts/IRQHandler.h>
-#include <Kernel/Memory/PhysicalPage.h>
-#include <Kernel/PhysicalAddress.h>
-#include <Kernel/WaitQueue.h>
 
 namespace Kernel {
 
@@ -20,14 +16,14 @@ class AudioChannel final
     friend class DeviceManagement;
 
 public:
-    static NonnullRefPtr<AudioChannel> must_create(AudioController const&, size_t channel_index);
+    static ErrorOr<NonnullRefPtr<AudioChannel>> create(AudioController const&, size_t channel_index);
     virtual ~AudioChannel() override = default;
 
     // ^CharacterDevice
-    virtual bool can_read(const OpenFileDescription&, u64) const override;
+    virtual bool can_read(OpenFileDescription const&, u64) const override;
     virtual ErrorOr<size_t> read(OpenFileDescription&, u64, UserOrKernelBuffer&, size_t) override;
-    virtual ErrorOr<size_t> write(OpenFileDescription&, u64, const UserOrKernelBuffer&, size_t) override;
-    virtual bool can_write(const OpenFileDescription&, u64) const override { return true; }
+    virtual ErrorOr<size_t> write(OpenFileDescription&, u64, UserOrKernelBuffer const&, size_t) override;
+    virtual bool can_write(OpenFileDescription const&, u64) const override { return true; }
 
     virtual ErrorOr<void> ioctl(OpenFileDescription&, unsigned, Userspace<void*>) override;
 
@@ -37,7 +33,7 @@ private:
     // ^CharacterDevice
     virtual StringView class_name() const override { return "AudioChannel"sv; }
 
-    WeakPtr<AudioController> m_controller;
-    const size_t m_channel_index;
+    LockWeakPtr<AudioController> m_controller;
+    size_t const m_channel_index;
 };
 }

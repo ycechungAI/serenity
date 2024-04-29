@@ -9,9 +9,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size)
+extern "C" int LLVMFuzzerTestOneInput(uint8_t const* data, size_t size)
 {
-    auto source = StringView(static_cast<const unsigned char*>(data), size);
+    AK::set_debug_enabled(false);
+    auto source = StringView(static_cast<unsigned char const*>(data), size);
     Shell::Parser parser(source);
     (void)parser.parse();
     return 0;

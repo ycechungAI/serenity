@@ -15,7 +15,9 @@ enum VendorID {
     RedHat = 0x1b36,
     Realtek = 0x10ec,
     QEMUOld = 0x1234,
-    VirtualBox = 0x80ee
+    VirtualBox = 0x80ee,
+    VMWare = 0x15ad,
+    Tdfx = 0x121a,
 };
 
 enum DeviceID {

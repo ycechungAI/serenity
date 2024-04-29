@@ -2,15 +2,42 @@
 # Functions for generating sources using host tools
 #
 
-function(compile_gml source output string_name)
+function(embed_as_string_view name source_file output source_variable_name)
+    cmake_parse_arguments(PARSE_ARGV 4 EMBED_STRING_VIEW "" "NAMESPACE" "")
+    set(namespace_arg "")
+    if (EMBED_STRING_VIEW_NAMESPACE)
+        set(namespace_arg "-s ${EMBED_STRING_VIEW_NAMESPACE}")
+    endif()
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_custom_command(
+        OUTPUT "${output}"
+        COMMAND "${Python3_EXECUTABLE}" "${SerenityOS_SOURCE_DIR}/Meta/embed_as_string_view.py" "${source_file}" -o "${output}.tmp" -n "${source_variable_name}" ${namespace_arg}
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${output}.tmp" "${output}"
+        COMMAND "${CMAKE_COMMAND}" -E remove "${output}.tmp"
+        VERBATIM
+        DEPENDS "${SerenityOS_SOURCE_DIR}/Meta/embed_as_string_view.py"
+        MAIN_DEPENDENCY "${source_file}"
+    )
+
+    add_custom_target("generate_${name}" DEPENDS "${output}")
+    add_dependencies(all_generated "generate_${name}")
+endfunction()
+
+function(stringify_gml source output string_name)
+    set(source ${CMAKE_CURRENT_SOURCE_DIR}/${source})
+    get_filename_component(output_name ${output} NAME)
+    embed_as_string_view(${output_name} ${source} ${output} ${string_name})
+endfunction()
+
+function(compile_gml source output)
     set(source ${CMAKE_CURRENT_SOURCE_DIR}/${source})
     add_custom_command(
         OUTPUT ${output}
-        COMMAND ${SerenityOS_SOURCE_DIR}/Meta/text-to-cpp-string.sh ${string_name} ${source} > ${output}.tmp
+        COMMAND $<TARGET_FILE:Lagom::GMLCompiler> ${source} > ${output}.tmp
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${output}.tmp ${output}
         COMMAND "${CMAKE_COMMAND}" -E remove ${output}.tmp
         VERBATIM
-        DEPENDS ${SerenityOS_SOURCE_DIR}/Meta/text-to-cpp-string.sh
+        DEPENDS Lagom::GMLCompiler
         MAIN_DEPENDENCY ${source}
     )
     get_filename_component(output_name ${output} NAME)
@@ -19,10 +46,12 @@ function(compile_gml source output string_name)
 endfunction()
 
 function(compile_ipc source output)
-    set(source ${CMAKE_CURRENT_SOURCE_DIR}/${source})
+    if (NOT IS_ABSOLUTE ${source})
+        set(source ${CMAKE_CURRENT_SOURCE_DIR}/${source})
+    endif()
     add_custom_command(
         OUTPUT ${output}
-        COMMAND $<TARGET_FILE:Lagom::IPCCompiler> ${source} > ${output}.tmp
+        COMMAND $<TARGET_FILE:Lagom::IPCCompiler> ${source} -o ${output}.tmp
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${output}.tmp ${output}
         COMMAND "${CMAKE_COMMAND}" -E remove ${output}.tmp
         VERBATIM
@@ -37,7 +66,7 @@ function(compile_ipc source output)
     #       https://cmake.org/cmake/help/v3.23/command/cmake_path.html#relative-path
     string(LENGTH ${SerenityOS_SOURCE_DIR} root_source_dir_length)
     string(SUBSTRING ${CMAKE_CURRENT_SOURCE_DIR} ${root_source_dir_length} -1 current_source_dir_relative)
-    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${output} DESTINATION usr/include${current_source_dir_relative} OPTIONAL)
+    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${output} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/${current_source_dir_relative}" OPTIONAL)
 endfunction()
 
 function(generate_state_machine source header)
@@ -51,7 +80,7 @@ function(generate_state_machine source header)
         set(output ${CMAKE_CURRENT_BINARY_DIR}/${header})
         add_custom_command(
             OUTPUT ${output}
-            COMMAND $<TARGET_FILE:Lagom::StateMachineGenerator> ${source} > ${output}.tmp
+            COMMAND $<TARGET_FILE:Lagom::StateMachineGenerator> ${source} -o ${output}.tmp
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different ${output}.tmp ${output}
             COMMAND "${CMAKE_COMMAND}" -E remove ${output}.tmp
             VERBATIM

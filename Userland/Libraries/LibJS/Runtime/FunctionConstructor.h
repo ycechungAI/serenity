@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2022, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,18 +13,20 @@ namespace JS {
 
 class FunctionConstructor final : public NativeFunction {
     JS_OBJECT(FunctionConstructor, NativeFunction);
+    JS_DECLARE_ALLOCATOR(FunctionConstructor);
 
 public:
-    static ThrowCompletionOr<ECMAScriptFunctionObject*> create_dynamic_function(GlobalObject& global_object, FunctionObject& constructor, FunctionObject* new_target, FunctionKind kind, MarkedVector<Value> const& args);
+    static ThrowCompletionOr<ECMAScriptFunctionObject*> create_dynamic_function(VM&, FunctionObject& constructor, FunctionObject* new_target, FunctionKind kind, MarkedVector<Value> const& args);
 
-    explicit FunctionConstructor(GlobalObject&);
-    virtual void initialize(GlobalObject&) override;
+    virtual void initialize(Realm&) override;
     virtual ~FunctionConstructor() override = default;
 
     virtual ThrowCompletionOr<Value> call() override;
-    virtual ThrowCompletionOr<Object*> construct(FunctionObject& new_target) override;
+    virtual ThrowCompletionOr<NonnullGCPtr<Object>> construct(FunctionObject& new_target) override;
 
 private:
+    explicit FunctionConstructor(Realm&);
+
     virtual bool has_constructor() const override { return true; }
 };
 

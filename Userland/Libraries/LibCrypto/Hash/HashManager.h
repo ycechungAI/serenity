@@ -9,21 +9,23 @@
 #include <AK/Optional.h>
 #include <AK/OwnPtr.h>
 #include <AK/Variant.h>
+#include <LibCrypto/Hash/BLAKE2b.h>
 #include <LibCrypto/Hash/HashFunction.h>
 #include <LibCrypto/Hash/MD5.h>
 #include <LibCrypto/Hash/SHA1.h>
 #include <LibCrypto/Hash/SHA2.h>
 
-namespace Crypto {
-namespace Hash {
+namespace Crypto::Hash {
 
 enum class HashKind {
+    Unknown,
     None,
+    BLAKE2b,
+    MD5,
     SHA1,
     SHA256,
     SHA384,
     SHA512,
-    MD5,
 };
 
 struct MultiHashDigestVariant {
@@ -59,25 +61,25 @@ struct MultiHashDigestVariant {
     {
     }
 
-    [[nodiscard]] const u8* immutable_data() const
+    [[nodiscard]] u8 const* immutable_data() const
     {
         return m_digest.visit(
-            [&](const Empty&) -> const u8* { VERIFY_NOT_REACHED(); },
-            [&](const auto& value) { return value.immutable_data(); });
+            [&](Empty const&) -> u8 const* { VERIFY_NOT_REACHED(); },
+            [&](auto const& value) { return value.immutable_data(); });
     }
 
     [[nodiscard]] size_t data_length() const
     {
         return m_digest.visit(
-            [&](const Empty&) -> size_t { VERIFY_NOT_REACHED(); },
-            [&](const auto& value) { return value.data_length(); });
+            [&](Empty const&) -> size_t { VERIFY_NOT_REACHED(); },
+            [&](auto const& value) { return value.data_length(); });
     }
 
     [[nodiscard]] ReadonlyBytes bytes() const
     {
         return m_digest.visit(
-            [&](const Empty&) -> ReadonlyBytes { VERIFY_NOT_REACHED(); },
-            [&](const auto& value) { return value.bytes(); });
+            [&](Empty const&) -> ReadonlyBytes { VERIFY_NOT_REACHED(); },
+            [&](auto const& value) { return value.bytes(); });
     }
 
     using DigestVariant = Variant<Empty, MD5::DigestType, SHA1::DigestType, SHA256::DigestType, SHA384::DigestType, SHA512::DigestType>;
@@ -93,7 +95,7 @@ public:
         m_pre_init_buffer = ByteBuffer();
     }
 
-    Manager(const Manager& other) // NOT a copy constructor!
+    Manager(Manager const& other) // NOT a copy constructor!
     {
         m_pre_init_buffer = ByteBuffer(); // will not be used
         initialize(other.m_kind);
@@ -113,15 +115,15 @@ public:
     inline size_t digest_size() const
     {
         return m_algorithm.visit(
-            [&](const Empty&) -> size_t { return 0; },
-            [&](const auto& hash) { return hash.digest_size(); });
+            [&](Empty const&) -> size_t { return 0; },
+            [&](auto const& hash) { return hash.digest_size(); });
     }
 
     inline size_t block_size() const
     {
         return m_algorithm.visit(
-            [&](const Empty&) -> size_t { return 0; },
-            [&](const auto& hash) { return hash.block_size(); });
+            [&](Empty const&) -> size_t { return 0; },
+            [&](auto const& hash) { return hash.block_size(); });
     }
 
     inline void initialize(HashKind kind)
@@ -132,6 +134,9 @@ public:
 
         m_kind = kind;
         switch (kind) {
+        case HashKind::BLAKE2b:
+            m_algorithm = BLAKE2b();
+            break;
         case HashKind::MD5:
             m_algorithm = MD5();
             break;
@@ -154,7 +159,7 @@ public:
         }
     }
 
-    virtual void update(const u8* data, size_t length) override
+    virtual void update(u8 const* data, size_t length) override
     {
         auto size = m_pre_init_buffer.size();
         if (size) {
@@ -192,11 +197,11 @@ public:
     }
 
 #ifndef KERNEL
-    virtual String class_name() const override
+    virtual ByteString class_name() const override
     {
         return m_algorithm.visit(
-            [&](const Empty&) -> String { return "UninitializedHashManager"; },
-            [&](const auto& hash) { return hash.class_name(); });
+            [&](Empty const&) -> ByteString { return "UninitializedHashManager"; },
+            [&](auto const& hash) { return hash.class_name(); });
     }
 #endif
 
@@ -210,12 +215,20 @@ public:
         return m_kind == kind;
     }
 
+    inline Manager copy() const
+    {
+        Manager result;
+        result.m_algorithm = m_algorithm;
+        result.m_kind = m_kind;
+        result.m_pre_init_buffer = m_pre_init_buffer;
+        return result;
+    }
+
 private:
-    using AlgorithmVariant = Variant<Empty, MD5, SHA1, SHA256, SHA384, SHA512>;
+    using AlgorithmVariant = Variant<Empty, BLAKE2b, MD5, SHA1, SHA256, SHA384, SHA512>;
     AlgorithmVariant m_algorithm {};
     HashKind m_kind { HashKind::None };
     ByteBuffer m_pre_init_buffer;
 };
 
-}
 }

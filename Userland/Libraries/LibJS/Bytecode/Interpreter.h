@@ -6,37 +6,59 @@
 
 #pragma once
 
-#include "Generator.h"
-#include "PassManager.h"
+#include <LibJS/Bytecode/Executable.h>
 #include <LibJS/Bytecode/Label.h>
 #include <LibJS/Bytecode/Register.h>
 #include <LibJS/Forward.h>
 #include <LibJS/Heap/Cell.h>
-#include <LibJS/Heap/Handle.h>
+#include <LibJS/Runtime/FunctionKind.h>
 #include <LibJS/Runtime/VM.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS::Bytecode {
 
-struct RegisterWindow {
-    MarkedVector<Value> registers;
-    MarkedVector<Environment*> saved_lexical_environments;
-    MarkedVector<Environment*> saved_variable_environments;
+class InstructionStreamIterator;
+
+struct CallFrame {
+    static NonnullOwnPtr<CallFrame> create(size_t register_count);
+
+    void operator delete(void* ptr) { free(ptr); }
+
+    void visit_edges(Cell::Visitor& visitor)
+    {
+        visitor.visit(registers());
+        visitor.visit(saved_lexical_environments);
+        for (auto& context : unwind_contexts) {
+            visitor.visit(context.lexical_environment);
+        }
+    }
+
+    Vector<GCPtr<Environment>> saved_lexical_environments;
+    Vector<UnwindInfo> unwind_contexts;
+    Vector<BasicBlock const*> previously_scheduled_jumps;
+
+    Span<Value> registers() { return { register_values, register_count }; }
+    ReadonlySpan<Value> registers() const { return { register_values, register_count }; }
+
+    size_t register_count { 0 };
+    Value register_values[];
 };
 
 class Interpreter {
 public:
-    Interpreter(GlobalObject&, Realm&);
+    explicit Interpreter(VM&);
     ~Interpreter();
 
-    // FIXME: Remove this thing once we don't need it anymore!
-    static Interpreter* current();
-
-    GlobalObject& global_object() { return m_global_object; }
-    Realm& realm() { return m_realm; }
+    [[nodiscard]] Realm& realm() { return *m_realm; }
+    [[nodiscard]] Object& global_object() { return *m_global_object; }
+    [[nodiscard]] DeclarativeEnvironment& global_declarative_environment() { return *m_global_declarative_environment; }
     VM& vm() { return m_vm; }
+    VM const& vm() const { return m_vm; }
 
-    ThrowCompletionOr<Value> run(Bytecode::Executable const& executable, Bytecode::BasicBlock const* entry_point = nullptr)
+    ThrowCompletionOr<Value> run(Script&, JS::GCPtr<Environment> lexical_environment_override = nullptr);
+    ThrowCompletionOr<Value> run(SourceTextModule&);
+
+    ThrowCompletionOr<Value> run(Bytecode::Executable& executable, Bytecode::BasicBlock const* entry_point = nullptr)
     {
         auto value_and_frame = run_and_return_frame(executable, entry_point);
         return move(value_and_frame.value);
@@ -44,68 +66,73 @@ public:
 
     struct ValueAndFrame {
         ThrowCompletionOr<Value> value;
-        OwnPtr<RegisterWindow> frame;
+        OwnPtr<CallFrame> frame;
     };
-    ValueAndFrame run_and_return_frame(Bytecode::Executable const&, Bytecode::BasicBlock const* entry_point);
+    ValueAndFrame run_and_return_frame(Bytecode::Executable&, Bytecode::BasicBlock const* entry_point, CallFrame* = nullptr);
 
     ALWAYS_INLINE Value& accumulator() { return reg(Register::accumulator()); }
+    ALWAYS_INLINE Value& saved_return_value() { return reg(Register::saved_return_value()); }
     Value& reg(Register const& r) { return registers()[r.index()]; }
-    [[nodiscard]] RegisterWindow snapshot_frame() const { return m_register_windows.last(); }
+    Value reg(Register const& r) const { return registers()[r.index()]; }
 
-    auto& saved_lexical_environment_stack() { return m_register_windows.last().saved_lexical_environments; }
-    auto& saved_variable_environment_stack() { return m_register_windows.last().saved_variable_environments; }
+    [[nodiscard]] Value get(Operand) const;
+    void set(Operand, Value);
 
-    void enter_frame(RegisterWindow const& frame)
+    auto& saved_lexical_environment_stack() { return call_frame().saved_lexical_environments; }
+    auto& unwind_contexts() { return call_frame().unwind_contexts; }
+
+    void do_return(Value value)
     {
-        m_manually_entered_frames.append(true);
-        m_register_windows.append(make<RegisterWindow>(frame));
-    }
-    NonnullOwnPtr<RegisterWindow> pop_frame()
-    {
-        VERIFY(!m_manually_entered_frames.is_empty());
-        VERIFY(m_manually_entered_frames.last());
-        m_manually_entered_frames.take_last();
-        return m_register_windows.take_last();
+        reg(Register::return_value()) = value;
+        reg(Register::exception()) = {};
     }
 
-    void jump(Label const& label)
-    {
-        m_pending_jump = &label.block();
-    }
-    void do_return(Value return_value) { m_return_value = return_value; }
-
-    void enter_unwind_context(Optional<Label> handler_target, Optional<Label> finalizer_target);
+    void enter_unwind_context();
     void leave_unwind_context();
-    ThrowCompletionOr<void> continue_pending_unwind(Label const& resume_label);
+    void catch_exception(Operand dst);
 
-    Executable const& current_executable() { return *m_current_executable; }
+    void enter_object_environment(Object&);
 
-    enum class OptimizationLevel {
-        Default,
-        __Count,
-    };
-    static Bytecode::PassManager& optimization_pipeline(OptimizationLevel = OptimizationLevel::Default);
+    Executable& current_executable() { return *m_current_executable; }
+    Executable const& current_executable() const { return *m_current_executable; }
+    BasicBlock const& current_block() const { return *m_current_block; }
+    Optional<InstructionStreamIterator const&> instruction_stream_iterator() const { return m_pc; }
 
-    VM::InterpreterExecutionScope ast_interpreter_scope();
+    void visit_edges(Cell::Visitor&);
+
+    Span<Value> registers() { return m_current_call_frame; }
+    ReadonlySpan<Value> registers() const { return m_current_call_frame; }
 
 private:
-    MarkedVector<Value>& registers() { return m_register_windows.last().registers; }
+    void run_bytecode();
 
-    static AK::Array<OwnPtr<PassManager>, static_cast<UnderlyingType<Interpreter::OptimizationLevel>>(Interpreter::OptimizationLevel::__Count)> s_optimization_pipelines;
+    CallFrame& call_frame()
+    {
+        return m_call_frames.last().visit([](auto& x) -> CallFrame& { return *x; });
+    }
+
+    CallFrame const& call_frame() const
+    {
+        return const_cast<Interpreter*>(this)->call_frame();
+    }
+
+    void push_call_frame(Variant<NonnullOwnPtr<CallFrame>, CallFrame*>);
+    [[nodiscard]] Variant<NonnullOwnPtr<CallFrame>, CallFrame*> pop_call_frame();
 
     VM& m_vm;
-    GlobalObject& m_global_object;
-    Realm& m_realm;
-    NonnullOwnPtrVector<RegisterWindow> m_register_windows;
-    Vector<bool> m_manually_entered_frames;
-    Optional<BasicBlock const*> m_pending_jump;
-    Value m_return_value;
-    Executable const* m_current_executable { nullptr };
-    Vector<UnwindInfo> m_unwind_contexts;
-    Handle<Value> m_saved_exception;
-    OwnPtr<JS::Interpreter> m_ast_interpreter;
+    Vector<Variant<NonnullOwnPtr<CallFrame>, CallFrame*>> m_call_frames;
+    Span<Value> m_current_call_frame;
+    BasicBlock const* m_scheduled_jump { nullptr };
+    GCPtr<Executable> m_current_executable { nullptr };
+    BasicBlock const* m_current_block { nullptr };
+    GCPtr<Realm> m_realm { nullptr };
+    GCPtr<Object> m_global_object { nullptr };
+    GCPtr<DeclarativeEnvironment> m_global_declarative_environment { nullptr };
+    Optional<InstructionStreamIterator&> m_pc {};
 };
 
 extern bool g_dump_bytecode;
+
+ThrowCompletionOr<NonnullGCPtr<Bytecode::Executable>> compile(VM&, ASTNode const&, ReadonlySpan<FunctionParameter>, JS::FunctionKind kind, DeprecatedFlyString const& name);
 
 }

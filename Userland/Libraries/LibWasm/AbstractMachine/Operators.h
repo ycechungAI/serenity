@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Ali Mohammad Pur <mpfard@serenityos.org>
+ * Copyright (c) 2021-2023, Ali Mohammad Pur <mpfard@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,19 +9,28 @@
 #include <AK/BitCast.h>
 #include <AK/BuiltinWrappers.h>
 #include <AK/Result.h>
+#include <AK/SIMD.h>
 #include <AK/StringView.h>
 #include <AK/Types.h>
 #include <limits.h>
 #include <math.h>
 
-namespace Operators {
+namespace Wasm::Operators {
 
-#define DEFINE_BINARY_OPERATOR(Name, operation)                               \
-    struct Name {                                                             \
-        template<typename Lhs, typename Rhs>                                  \
-        auto operator()(Lhs lhs, Rhs rhs) const { return lhs operation rhs; } \
-                                                                              \
-        static StringView name() { return #operation; }                       \
+using namespace AK::SIMD;
+
+#define DEFINE_BINARY_OPERATOR(Name, operation) \
+    struct Name {                               \
+        template<typename Lhs, typename Rhs>    \
+        auto operator()(Lhs lhs, Rhs rhs) const \
+        {                                       \
+            return lhs operation rhs;           \
+        }                                       \
+                                                \
+        static StringView name()                \
+        {                                       \
+            return #operation##sv;              \
+        }                                       \
     }
 
 DEFINE_BINARY_OPERATOR(Equals, ==);
@@ -49,40 +58,44 @@ struct Divide {
             Checked value(lhs);
             value /= rhs;
             if (value.has_overflow())
-                return AK::Result<Lhs, StringView>("Integer division overflow"sv);
-            return AK::Result<Lhs, StringView>(value.value());
+                return AK::ErrorOr<Lhs, StringView>("Integer division overflow"sv);
+            return AK::ErrorOr<Lhs, StringView>(value.value());
         }
     }
 
-    static StringView name() { return "/"; }
+    static StringView name() { return "/"sv; }
 };
+
 struct Modulo {
     template<typename Lhs, typename Rhs>
     auto operator()(Lhs lhs, Rhs rhs) const
     {
         if (rhs == 0)
-            return AK::Result<Lhs, StringView>("Integer division overflow"sv);
+            return AK::ErrorOr<Lhs, StringView>("Integer division overflow"sv);
         if constexpr (IsSigned<Lhs>) {
             if (rhs == -1)
-                return AK::Result<Lhs, StringView>(0); // Spec weirdness right here, signed division overflow is ignored.
+                return AK::ErrorOr<Lhs, StringView>(0); // Spec weirdness right here, signed division overflow is ignored.
         }
-        return AK::Result<Lhs, StringView>(lhs % rhs);
+        return AK::ErrorOr<Lhs, StringView>(lhs % rhs);
     }
 
-    static StringView name() { return "%"; }
+    static StringView name() { return "%"sv; }
 };
+
 struct BitShiftLeft {
     template<typename Lhs, typename Rhs>
     auto operator()(Lhs lhs, Rhs rhs) const { return lhs << (rhs % (sizeof(lhs) * 8)); }
 
-    static StringView name() { return "<<"; }
+    static StringView name() { return "<<"sv; }
 };
+
 struct BitShiftRight {
     template<typename Lhs, typename Rhs>
     auto operator()(Lhs lhs, Rhs rhs) const { return lhs >> (rhs % (sizeof(lhs) * 8)); }
 
-    static StringView name() { return ">>"; }
+    static StringView name() { return ">>"sv; }
 };
+
 struct BitRotateLeft {
     template<typename Lhs, typename Rhs>
     auto operator()(Lhs lhs, Rhs rhs) const
@@ -94,8 +107,9 @@ struct BitRotateLeft {
         return (lhs << rhs) | (lhs >> ((-rhs) & mask));
     }
 
-    static StringView name() { return "rotate_left"; }
+    static StringView name() { return "rotate_left"sv; }
 };
+
 struct BitRotateRight {
     template<typename Lhs, typename Rhs>
     auto operator()(Lhs lhs, Rhs rhs) const
@@ -107,8 +121,209 @@ struct BitRotateRight {
         return (lhs >> rhs) | (lhs << ((-rhs) & mask));
     }
 
-    static StringView name() { return "rotate_right"; }
+    static StringView name() { return "rotate_right"sv; }
 };
+
+template<size_t VectorSize>
+struct VectorShiftLeft {
+    auto operator()(u128 lhs, i32 rhs) const
+    {
+        auto shift_value = rhs % (sizeof(lhs) * 8 / VectorSize);
+        return bit_cast<u128>(bit_cast<Native128ByteVectorOf<NativeIntegralType<128 / VectorSize>, MakeUnsigned>>(lhs) << shift_value);
+    }
+    static StringView name()
+    {
+        switch (VectorSize) {
+        case 16:
+            return "vec(8x16)<<"sv;
+        case 8:
+            return "vec(16x8)<<"sv;
+        case 4:
+            return "vec(32x4)<<"sv;
+        case 2:
+            return "vec(64x2)<<"sv;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
+};
+
+template<size_t VectorSize, template<typename> typename SetSign>
+struct VectorShiftRight {
+    auto operator()(u128 lhs, i32 rhs) const
+    {
+        auto shift_value = rhs % (sizeof(lhs) * 8 / VectorSize);
+        return bit_cast<u128>(bit_cast<Native128ByteVectorOf<NativeIntegralType<128 / VectorSize>, SetSign>>(lhs) >> shift_value);
+    }
+    static StringView name()
+    {
+        switch (VectorSize) {
+        case 16:
+            return "vec(8x16)>>"sv;
+        case 8:
+            return "vec(16x8)>>"sv;
+        case 4:
+            return "vec(32x4)>>"sv;
+        case 2:
+            return "vec(64x2)>>"sv;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
+};
+
+struct VectorSwizzle {
+    auto operator()(u128 c1, u128 c2) const
+    {
+        // https://webassembly.github.io/spec/core/bikeshed/#-mathsfi8x16hrefsyntax-instr-vecmathsfswizzle%E2%91%A0
+        auto i = bit_cast<Native128ByteVectorOf<i8, MakeSigned>>(c2);
+        auto j = bit_cast<Native128ByteVectorOf<i8, MakeSigned>>(c1);
+        auto result = AK::SIMD::shuffle(i, j);
+        return bit_cast<u128>(result);
+    }
+    static StringView name() { return "vec(8x16).swizzle"sv; }
+};
+
+template<size_t VectorSize, template<typename> typename SetSign>
+struct VectorExtractLane {
+    size_t lane;
+
+    auto operator()(u128 c) const
+    {
+        auto result = bit_cast<Native128ByteVectorOf<NativeIntegralType<128 / VectorSize>, SetSign>>(c);
+        return result[lane];
+    }
+
+    static StringView name()
+    {
+        switch (VectorSize) {
+        case 16:
+            return "vec(8x16).extract_lane"sv;
+        case 8:
+            return "vec(16x8).extract_lane"sv;
+        case 4:
+            return "vec(32x4).extract_lane"sv;
+        case 2:
+            return "vec(64x2).extract_lane"sv;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
+};
+
+template<size_t VectorSize>
+struct VectorExtractLaneFloat {
+    size_t lane;
+
+    auto operator()(u128 c) const
+    {
+        auto result = bit_cast<NativeFloatingVectorType<128 / VectorSize, VectorSize>>(c);
+        return result[lane];
+    }
+
+    static StringView name()
+    {
+        switch (VectorSize) {
+        case 16:
+            return "vec(8x16).extract_lane"sv;
+        case 8:
+            return "vec(16x8).extract_lane"sv;
+        case 4:
+            return "vec(32x4).extract_lane"sv;
+        case 2:
+            return "vec(64x2).extract_lane"sv;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
+};
+
+template<size_t VectorSize, typename TrueValueType = NativeIntegralType<128 / VectorSize>>
+struct VectorReplaceLane {
+    size_t lane;
+    using ValueType = Conditional<IsFloatingPoint<TrueValueType>, NativeFloatingType<128 / VectorSize>, NativeIntegralType<128 / VectorSize>>;
+
+    auto operator()(u128 c, TrueValueType value) const
+    {
+        auto result = bit_cast<Native128ByteVectorOf<ValueType, MakeUnsigned>>(c);
+        result[lane] = static_cast<ValueType>(value);
+        return bit_cast<u128>(result);
+    }
+
+    static StringView name()
+    {
+        switch (VectorSize) {
+        case 16:
+            return "vec(8x16).replace_lane"sv;
+        case 8:
+            return "vec(16x8).replace_lane"sv;
+        case 4:
+            return "vec(32x4).replace_lane"sv;
+        case 2:
+            return "vec(64x2).replace_lane"sv;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
+};
+
+template<size_t VectorSize, typename Op, template<typename> typename SetSign = MakeSigned>
+struct VectorCmpOp {
+    auto operator()(u128 c1, u128 c2) const
+    {
+        using ElementType = NativeIntegralType<128 / VectorSize>;
+        auto result = bit_cast<Native128ByteVectorOf<ElementType, SetSign>>(c1);
+        auto other = bit_cast<Native128ByteVectorOf<ElementType, SetSign>>(c2);
+        Op op;
+        for (size_t i = 0; i < VectorSize; ++i)
+            result[i] = op(result[i], other[i]) ? static_cast<MakeUnsigned<ElementType>>(-1) : 0;
+        return bit_cast<u128>(result);
+    }
+
+    static StringView name()
+    {
+        switch (VectorSize) {
+        case 16:
+            return "vec(8x16).cmp"sv;
+        case 8:
+            return "vec(16x8).cmp"sv;
+        case 4:
+            return "vec(32x4).cmp"sv;
+        case 2:
+            return "vec(64x2).cmp"sv;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
+};
+
+template<size_t VectorSize, typename Op>
+struct VectorFloatCmpOp {
+    auto operator()(u128 c1, u128 c2) const
+    {
+        auto first = bit_cast<NativeFloatingVectorType<128, VectorSize, NativeFloatingType<128 / VectorSize>>>(c1);
+        auto other = bit_cast<NativeFloatingVectorType<128, VectorSize, NativeFloatingType<128 / VectorSize>>>(c2);
+        using ElementType = NativeIntegralType<128 / VectorSize>;
+        Native128ByteVectorOf<ElementType, MakeUnsigned> result;
+        Op op;
+        for (size_t i = 0; i < VectorSize; ++i)
+            result[i] = op(first[i], other[i]) ? static_cast<ElementType>(-1) : 0;
+        return bit_cast<u128>(result);
+    }
+
+    static StringView name()
+    {
+        switch (VectorSize) {
+        case 4:
+            return "vecf(32x4).cmp"sv;
+        case 2:
+            return "vecf(64x2).cmp"sv;
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
+};
+
 struct Minimum {
     template<typename Lhs, typename Rhs>
     auto operator()(Lhs lhs, Rhs rhs) const
@@ -126,8 +341,9 @@ struct Minimum {
         return min(lhs, rhs);
     }
 
-    static StringView name() { return "minimum"; }
+    static StringView name() { return "minimum"sv; }
 };
+
 struct Maximum {
     template<typename Lhs, typename Rhs>
     auto operator()(Lhs lhs, Rhs rhs) const
@@ -145,8 +361,9 @@ struct Maximum {
         return max(lhs, rhs);
     }
 
-    static StringView name() { return "maximum"; }
+    static StringView name() { return "maximum"sv; }
 };
+
 struct CopySign {
     template<typename Lhs, typename Rhs>
     auto operator()(Lhs lhs, Rhs rhs) const
@@ -159,7 +376,7 @@ struct CopySign {
             static_assert(DependentFalse<Lhs, Rhs>, "Invalid types to CopySign");
     }
 
-    static StringView name() { return "copysign"; }
+    static StringView name() { return "copysign"sv; }
 };
 
 // Unary
@@ -168,8 +385,9 @@ struct EqualsZero {
     template<typename Lhs>
     auto operator()(Lhs lhs) const { return lhs == 0; }
 
-    static StringView name() { return "== 0"; }
+    static StringView name() { return "== 0"sv; }
 };
+
 struct CountLeadingZeros {
     template<typename Lhs>
     i32 operator()(Lhs lhs) const
@@ -183,8 +401,9 @@ struct CountLeadingZeros {
             VERIFY_NOT_REACHED();
     }
 
-    static StringView name() { return "clz"; }
+    static StringView name() { return "clz"sv; }
 };
+
 struct CountTrailingZeros {
     template<typename Lhs>
     i32 operator()(Lhs lhs) const
@@ -198,8 +417,9 @@ struct CountTrailingZeros {
             VERIFY_NOT_REACHED();
     }
 
-    static StringView name() { return "ctz"; }
+    static StringView name() { return "ctz"sv; }
 };
+
 struct PopCount {
     template<typename Lhs>
     auto operator()(Lhs lhs) const
@@ -210,20 +430,23 @@ struct PopCount {
             VERIFY_NOT_REACHED();
     }
 
-    static StringView name() { return "popcnt"; }
+    static StringView name() { return "popcnt"sv; }
 };
+
 struct Absolute {
     template<typename Lhs>
     auto operator()(Lhs lhs) const { return AK::abs(lhs); }
 
-    static StringView name() { return "abs"; }
+    static StringView name() { return "abs"sv; }
 };
+
 struct Negate {
     template<typename Lhs>
     auto operator()(Lhs lhs) const { return -lhs; }
 
-    static StringView name() { return "== 0"; }
+    static StringView name() { return "== 0"sv; }
 };
+
 struct Ceil {
     template<typename Lhs>
     auto operator()(Lhs lhs) const
@@ -236,8 +459,9 @@ struct Ceil {
             VERIFY_NOT_REACHED();
     }
 
-    static StringView name() { return "ceil"; }
+    static StringView name() { return "ceil"sv; }
 };
+
 struct Floor {
     template<typename Lhs>
     auto operator()(Lhs lhs) const
@@ -250,11 +474,12 @@ struct Floor {
             VERIFY_NOT_REACHED();
     }
 
-    static StringView name() { return "floor"; }
+    static StringView name() { return "floor"sv; }
 };
+
 struct Truncate {
     template<typename Lhs>
-    Result<Lhs, StringView> operator()(Lhs lhs) const
+    AK::ErrorOr<Lhs, StringView> operator()(Lhs lhs) const
     {
         if constexpr (IsSame<Lhs, float>)
             return truncf(lhs);
@@ -264,8 +489,9 @@ struct Truncate {
             VERIFY_NOT_REACHED();
     }
 
-    static StringView name() { return "truncate"; }
+    static StringView name() { return "truncate"sv; }
 };
+
 struct NearbyIntegral {
     template<typename Lhs>
     auto operator()(Lhs lhs) const
@@ -278,8 +504,9 @@ struct NearbyIntegral {
             VERIFY_NOT_REACHED();
     }
 
-    static StringView name() { return "round"; }
+    static StringView name() { return "round"sv; }
 };
+
 struct SquareRoot {
     template<typename Lhs>
     auto operator()(Lhs lhs) const
@@ -292,7 +519,7 @@ struct SquareRoot {
             VERIFY_NOT_REACHED();
     }
 
-    static StringView name() { return "sqrt"; }
+    static StringView name() { return "sqrt"sv; }
 };
 
 template<typename Result>
@@ -303,13 +530,13 @@ struct Wrap {
         return static_cast<MakeUnsigned<Result>>(bit_cast<MakeUnsigned<Lhs>>(lhs));
     }
 
-    static StringView name() { return "wrap"; }
+    static StringView name() { return "wrap"sv; }
 };
 
 template<typename ResultT>
 struct CheckedTruncate {
     template<typename Lhs>
-    AK::Result<ResultT, StringView> operator()(Lhs lhs) const
+    AK::ErrorOr<ResultT, StringView> operator()(Lhs lhs) const
     {
         if (isnan(lhs) || isinf(lhs)) // "undefined", let's just trap.
             return "Truncation undefined behavior"sv;
@@ -331,7 +558,7 @@ struct CheckedTruncate {
         return static_cast<ResultT>(truncated);
     }
 
-    static StringView name() { return "truncate.checked"; }
+    static StringView name() { return "truncate.checked"sv; }
 };
 
 template<typename ResultT>
@@ -342,7 +569,7 @@ struct Extend {
         return lhs;
     }
 
-    static StringView name() { return "extend"; }
+    static StringView name() { return "extend"sv; }
 };
 
 template<typename ResultT>
@@ -354,7 +581,7 @@ struct Convert {
         return static_cast<ResultT>(signed_interpretation);
     }
 
-    static StringView name() { return "convert"; }
+    static StringView name() { return "convert"sv; }
 };
 
 template<typename ResultT>
@@ -365,7 +592,7 @@ struct Reinterpret {
         return bit_cast<ResultT>(lhs);
     }
 
-    static StringView name() { return "reinterpret"; }
+    static StringView name() { return "reinterpret"sv; }
 };
 
 struct Promote {
@@ -376,7 +603,7 @@ struct Promote {
         return static_cast<double>(lhs);
     }
 
-    static StringView name() { return "promote"; }
+    static StringView name() { return "promote"sv; }
 };
 
 struct Demote {
@@ -391,7 +618,7 @@ struct Demote {
         return static_cast<float>(lhs);
     }
 
-    static StringView name() { return "demote"; }
+    static StringView name() { return "demote"sv; }
 };
 
 template<typename InitialType>
@@ -405,7 +632,7 @@ struct SignExtend {
         return static_cast<Lhs>(initial_value);
     }
 
-    static StringView name() { return "extend"; }
+    static StringView name() { return "extend"sv; }
 };
 
 template<typename ResultT>
@@ -425,11 +652,16 @@ struct SaturatingTruncate {
         // FIXME: This assumes that all values in ResultT are representable in 'double'.
         //        that assumption is not correct, which makes this function yield incorrect values
         //        for 'edge' values of type i64.
-        constexpr auto convert = [](auto truncated_value) {
+        constexpr auto convert = []<typename ConvertT>(ConvertT truncated_value) {
             if (truncated_value < NumericLimits<ResultT>::min())
                 return NumericLimits<ResultT>::min();
-            if (static_cast<double>(truncated_value) > static_cast<double>(NumericLimits<ResultT>::max()))
-                return NumericLimits<ResultT>::max();
+            if constexpr (IsSame<ConvertT, float>) {
+                if (truncated_value >= static_cast<ConvertT>(NumericLimits<ResultT>::max()))
+                    return NumericLimits<ResultT>::max();
+            } else {
+                if (static_cast<double>(truncated_value) >= static_cast<double>(NumericLimits<ResultT>::max()))
+                    return NumericLimits<ResultT>::max();
+            }
             return static_cast<ResultT>(truncated_value);
         };
 
@@ -439,7 +671,7 @@ struct SaturatingTruncate {
             return convert(trunc(lhs));
     }
 
-    static StringView name() { return "truncate.saturating"; }
+    static StringView name() { return "truncate.saturating"sv; }
 };
 
 }

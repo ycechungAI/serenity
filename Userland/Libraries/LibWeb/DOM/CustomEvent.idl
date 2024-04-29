@@ -1,6 +1,7 @@
 #import <DOM/Event.idl>
 
-[Exposed=(Window,Worker), CustomVisit]
+// https://dom.spec.whatwg.org/#interface-customevent
+[Exposed=(Window,Worker)]
 interface CustomEvent : Event {
     constructor(DOMString type, optional CustomEventInit eventInitDict = {});
 

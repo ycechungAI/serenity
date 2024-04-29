@@ -11,10 +11,10 @@
 #include <AK/HashTable.h>
 #include <AK/Noncopyable.h>
 #include <AK/RefCounted.h>
-#include <AK/URL.h>
 #include <AK/WeakPtr.h>
 #include <AK/Weakable.h>
 #include <LibGfx/Forward.h>
+#include <LibURL/URL.h>
 #include <LibWeb/Forward.h>
 #include <LibWeb/Loader/LoadRequest.h>
 
@@ -29,25 +29,31 @@ class Resource : public RefCounted<Resource> {
 public:
     enum class Type {
         Generic,
-        Image,
     };
 
-    static NonnullRefPtr<Resource> create(Badge<ResourceLoader>, Type, const LoadRequest&);
+    static NonnullRefPtr<Resource> create(Badge<ResourceLoader>, Type, LoadRequest const&);
     virtual ~Resource();
 
     Type type() const { return m_type; }
 
-    bool is_loaded() const { return m_loaded; }
+    enum class State {
+        Pending,
+        Loaded,
+        Failed,
+    };
 
-    bool is_failed() const { return m_failed; }
-    const String& error() const { return m_error; }
+    bool is_pending() const { return m_state == State::Pending; }
+    bool is_loaded() const { return m_state == State::Loaded; }
+    bool is_failed() const { return m_state == State::Failed; }
+
+    ByteString const& error() const { return m_error; }
 
     bool has_encoded_data() const { return !m_encoded_data.is_empty(); }
 
-    const AK::URL& url() const { return m_request.url(); }
-    const ByteBuffer& encoded_data() const { return m_encoded_data; }
+    const URL::URL& url() const { return m_request.url(); }
+    ByteBuffer const& encoded_data() const { return m_encoded_data; }
 
-    const HashMap<String, String, CaseInsensitiveStringTraits>& response_headers() const { return m_response_headers; }
+    HashMap<ByteString, ByteString, CaseInsensitiveStringTraits> const& response_headers() const { return m_response_headers; }
 
     [[nodiscard]] Optional<u32> status_code() const { return m_status_code; }
 
@@ -55,29 +61,30 @@ public:
     void unregister_client(Badge<ResourceClient>, ResourceClient&);
 
     bool has_encoding() const { return m_encoding.has_value(); }
-    const Optional<String>& encoding() const { return m_encoding; }
-    const String& mime_type() const { return m_mime_type; }
+    Optional<ByteString> const& encoding() const { return m_encoding; }
+    ByteString const& mime_type() const { return m_mime_type; }
 
     void for_each_client(Function<void(ResourceClient&)>);
 
-    void did_load(Badge<ResourceLoader>, ReadonlyBytes data, const HashMap<String, String, CaseInsensitiveStringTraits>& headers, Optional<u32> status_code);
-    void did_fail(Badge<ResourceLoader>, const String& error, Optional<u32> status_code);
+    void did_load(Badge<ResourceLoader>, ReadonlyBytes data, HashMap<ByteString, ByteString, CaseInsensitiveStringTraits> const& headers, Optional<u32> status_code);
+    void did_fail(Badge<ResourceLoader>, ByteString const& error, Optional<u32> status_code);
 
 protected:
-    explicit Resource(Type, const LoadRequest&);
+    explicit Resource(Type, LoadRequest const&);
     Resource(Type, Resource&);
+
+    LoadRequest request() const { return m_request; }
 
 private:
     LoadRequest m_request;
     ByteBuffer m_encoded_data;
     Type m_type { Type::Generic };
-    bool m_loaded { false };
-    bool m_failed { false };
-    String m_error;
-    Optional<String> m_encoding;
+    State m_state { State::Pending };
+    ByteString m_error;
+    Optional<ByteString> m_encoding;
 
-    String m_mime_type;
-    HashMap<String, String, CaseInsensitiveStringTraits> m_response_headers;
+    ByteString m_mime_type;
+    HashMap<ByteString, ByteString, CaseInsensitiveStringTraits> m_response_headers;
     Optional<u32> m_status_code;
     HashTable<ResourceClient*> m_clients;
 };
@@ -93,7 +100,7 @@ protected:
     virtual Resource::Type client_type() const { return Resource::Type::Generic; }
 
     Resource* resource() { return m_resource; }
-    const Resource* resource() const { return m_resource; }
+    Resource const* resource() const { return m_resource; }
     void set_resource(Resource*);
 
 private:

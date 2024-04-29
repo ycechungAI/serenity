@@ -8,13 +8,18 @@
 #include <AK/BinarySearch.h>
 #include <AK/Debug.h>
 #include <AK/Demangle.h>
-#include <AK/Memory.h>
 #include <AK/QuickSort.h>
 #include <AK/StringBuilder.h>
 #include <AK/StringView.h>
+#include <Kernel/API/serenity_limits.h>
 #include <LibELF/Image.h>
 #include <LibELF/Validation.h>
-#include <limits.h>
+
+#ifdef KERNEL
+#    include <Kernel/Library/StdLib.h>
+#else
+#    include <string.h>
+#endif
 
 namespace ELF {
 
@@ -26,7 +31,7 @@ Image::Image(ReadonlyBytes bytes, bool verbose_logging)
     parse();
 }
 
-Image::Image(const u8* buffer, size_t size, bool verbose_logging)
+Image::Image(u8 const* buffer, size_t size, bool verbose_logging)
     : Image(ReadonlyBytes { buffer, size }, verbose_logging)
 {
 }
@@ -60,7 +65,7 @@ void Image::dump() const
         return;
     }
 
-    dbgln("    type:    {}", ELF::Image::object_file_type_to_string(header().e_type).value_or("(?)"));
+    dbgln("    type:    {}", ELF::Image::object_file_type_to_string(header().e_type).value_or("(?)"sv));
     dbgln("    machine: {}", header().e_machine);
     dbgln("    entry:   {:x}", header().e_entry);
     dbgln("    shoff:   {}", header().e_shoff);
@@ -69,7 +74,7 @@ void Image::dump() const
     dbgln("    phnum:   {}", header().e_phnum);
     dbgln(" shstrndx:   {}", header().e_shstrndx);
 
-    for_each_program_header([&](const ProgramHeader& program_header) {
+    for_each_program_header([&](ProgramHeader const& program_header) {
         dbgln("    Program Header {}: {{", program_header.index());
         dbgln("        type: {:x}", program_header.type());
         dbgln("      offset: {:x}", program_header.offset());
@@ -78,7 +83,7 @@ void Image::dump() const
     });
 
     for (unsigned i = 0; i < header().e_shnum; ++i) {
-        const auto& section = this->section(i);
+        auto const& section = this->section(i);
         dbgln("    Section {}: {{", i);
         dbgln("        name: {}", section.name());
         dbgln("        type: {:x}", section.type());
@@ -90,7 +95,7 @@ void Image::dump() const
 
     dbgln("Symbol count: {} (table is {})", symbol_count(), m_symbol_table_section_index);
     for (unsigned i = 1; i < symbol_count(); ++i) {
-        const auto& sym = symbol(i);
+        auto const& sym = symbol(i);
         dbgln("Symbol @{}:", i);
         dbgln("    Name: {}", sym.name());
         dbgln("    In section: {}", section_index_to_string(sym.section_index()));
@@ -116,14 +121,14 @@ unsigned Image::program_header_count() const
 
 bool Image::parse()
 {
-    if (m_size < sizeof(ElfW(Ehdr)) || !validate_elf_header(header(), m_size, m_verbose_logging)) {
+    if (m_size < sizeof(Elf_Ehdr) || !validate_elf_header(header(), m_size, m_verbose_logging)) {
         if (m_verbose_logging)
             dbgln("ELF::Image::parse(): ELF Header not valid");
         m_valid = false;
         return false;
     }
 
-    auto result_or_error = validate_program_headers(header(), m_size, { m_buffer, m_size }, nullptr, m_verbose_logging);
+    auto result_or_error = validate_program_headers(header(), m_size, { m_buffer, m_size }, nullptr, nullptr, m_verbose_logging);
     if (result_or_error.is_error()) {
         if (m_verbose_logging)
             dbgln("ELF::Image::parse(): Failed validating ELF Program Headers");
@@ -163,7 +168,7 @@ StringView Image::table_string(unsigned table_index, unsigned offset) const
     VERIFY(m_valid);
     auto& sh = section_header(table_index);
     if (sh.sh_type != SHT_STRTAB)
-        return nullptr;
+        return {};
     size_t computed_offset = sh.sh_offset + offset;
     if (computed_offset >= m_size) {
         if (m_verbose_logging)
@@ -187,37 +192,37 @@ StringView Image::table_string(unsigned offset) const
     return table_string(m_string_table_section_index, offset);
 }
 
-const char* Image::raw_data(unsigned offset) const
+char const* Image::raw_data(unsigned offset) const
 {
     VERIFY(offset < m_size); // Callers must check indices into raw_data()'s result are also in bounds.
-    return reinterpret_cast<const char*>(m_buffer) + offset;
+    return reinterpret_cast<char const*>(m_buffer) + offset;
 }
 
-const ElfW(Ehdr) & Image::header() const
+Elf_Ehdr const& Image::header() const
 {
-    VERIFY(m_size >= sizeof(ElfW(Ehdr)));
-    return *reinterpret_cast<const ElfW(Ehdr)*>(raw_data(0));
+    VERIFY(m_size >= sizeof(Elf_Ehdr));
+    return *reinterpret_cast<Elf_Ehdr const*>(raw_data(0));
 }
 
-const ElfW(Phdr) & Image::program_header_internal(unsigned index) const
+Elf_Phdr const& Image::program_header_internal(unsigned index) const
 {
     VERIFY(m_valid);
     VERIFY(index < header().e_phnum);
-    return *reinterpret_cast<const ElfW(Phdr)*>(raw_data(header().e_phoff + (index * sizeof(ElfW(Phdr)))));
+    return *reinterpret_cast<Elf_Phdr const*>(raw_data(header().e_phoff + (index * sizeof(Elf_Phdr))));
 }
 
-const ElfW(Shdr) & Image::section_header(unsigned index) const
+Elf_Shdr const& Image::section_header(unsigned index) const
 {
     VERIFY(m_valid);
     VERIFY(index < header().e_shnum);
-    return *reinterpret_cast<const ElfW(Shdr)*>(raw_data(header().e_shoff + (index * header().e_shentsize)));
+    return *reinterpret_cast<Elf_Shdr const*>(raw_data(header().e_shoff + (index * header().e_shentsize)));
 }
 
 Image::Symbol Image::symbol(unsigned index) const
 {
     VERIFY(m_valid);
     VERIFY(index < symbol_count());
-    auto* raw_syms = reinterpret_cast<const ElfW(Sym)*>(raw_data(section(m_symbol_table_section_index).offset()));
+    auto* raw_syms = reinterpret_cast<Elf_Sym const*>(raw_data(section(m_symbol_table_section_index).offset()));
     return Symbol(*this, index, raw_syms[index]);
 }
 
@@ -238,7 +243,7 @@ Image::ProgramHeader Image::program_header(unsigned index) const
 Image::Relocation Image::RelocationSection::relocation(unsigned index) const
 {
     VERIFY(index < relocation_count());
-    auto* rels = reinterpret_cast<const ElfW(Rel)*>(m_image.raw_data(offset()));
+    auto* rels = reinterpret_cast<Elf_Rel const*>(m_image.raw_data(offset()));
     return Relocation(m_image, rels[index]);
 }
 
@@ -267,7 +272,7 @@ Optional<Image::Section> Image::lookup_section(StringView name) const
     return {};
 }
 
-Optional<StringView> Image::object_file_type_to_string(ElfW(Half) type)
+Optional<StringView> Image::object_file_type_to_string(Elf_Half type)
 {
     switch (type) {
     case ET_NONE:
@@ -285,7 +290,7 @@ Optional<StringView> Image::object_file_type_to_string(ElfW(Half) type)
     }
 }
 
-Optional<StringView> Image::object_machine_type_to_string(ElfW(Half) type)
+Optional<StringView> Image::object_machine_type_to_string(Elf_Half type)
 {
     switch (type) {
     case ET_NONE:
@@ -361,8 +366,8 @@ StringView Image::Symbol::raw_data() const
 Optional<Image::Symbol> Image::find_demangled_function(StringView name) const
 {
     Optional<Image::Symbol> found;
-    for_each_symbol([&](const Image::Symbol& symbol) {
-        if (symbol.type() != STT_FUNC)
+    for_each_symbol([&](Image::Symbol const& symbol) {
+        if (symbol.type() != STT_FUNC && symbol.type() != STT_GNU_IFUNC)
             return IterationDecision::Continue;
         if (symbol.is_undefined())
             return IterationDecision::Continue;
@@ -416,7 +421,17 @@ Optional<Image::Symbol> Image::find_symbol(FlatPtr address, u32* out_offset) con
 NEVER_INLINE void Image::sort_symbols() const
 {
     m_sorted_symbols.ensure_capacity(symbol_count());
-    for_each_symbol([this](const auto& symbol) {
+    bool const is_aarch64_or_riscv = header().e_machine == EM_AARCH64 || header().e_machine == EM_RISCV;
+    for_each_symbol([this, is_aarch64_or_riscv](auto const& symbol) {
+        // The AArch64 and RISC-V ABIs mark the boundaries of literal pools in a function with $x/$d.
+        // https://github.com/ARM-software/abi-aa/blob/2023q1-release/aaelf64/aaelf64.rst#mapping-symbols
+        // https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-elf.adoc#mapping-symbol
+        // Skip them so we don't accidentally print these instead of function names.
+        if (is_aarch64_or_riscv && (symbol.name().starts_with("$x"sv) || symbol.name().starts_with("$d"sv)))
+            return;
+        // STT_SECTION has the same address as the first function in the section, but shows up as the empty string.
+        if (symbol.type() == STT_SECTION)
+            return;
         m_sorted_symbols.append({ symbol.value(), symbol.name(), {}, symbol });
     });
     quick_sort(m_sorted_symbols, [](auto& a, auto& b) {
@@ -424,7 +439,7 @@ NEVER_INLINE void Image::sort_symbols() const
     });
 }
 
-String Image::symbolicate(FlatPtr address, u32* out_offset) const
+ByteString Image::symbolicate(FlatPtr address, u32* out_offset) const
 {
     auto symbol_count = this->symbol_count();
     if (!symbol_count) {
@@ -441,14 +456,14 @@ String Image::symbolicate(FlatPtr address, u32* out_offset) const
     }
 
     auto& demangled_name = symbol->demangled_name;
-    if (demangled_name.is_null())
+    if (demangled_name.is_empty())
         demangled_name = demangle(symbol->name);
 
     if (out_offset) {
         *out_offset = address - symbol->address;
         return demangled_name;
     }
-    return String::formatted("{} +{:#x}", demangled_name, address - symbol->address);
+    return ByteString::formatted("{} +{:#x}", demangled_name, address - symbol->address);
 }
 #endif
 

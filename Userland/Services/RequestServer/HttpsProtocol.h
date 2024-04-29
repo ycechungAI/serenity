@@ -7,11 +7,11 @@
 #pragma once
 
 #include <AK/ByteBuffer.h>
+#include <AK/ByteString.h>
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
-#include <AK/String.h>
-#include <AK/URL.h>
 #include <LibHTTP/HttpsJob.h>
+#include <LibURL/URL.h>
 #include <RequestServer/ConnectionFromClient.h>
 #include <RequestServer/HttpsRequest.h>
 #include <RequestServer/Protocol.h>
@@ -24,10 +24,14 @@ public:
     using JobType = HTTP::HttpsJob;
     using RequestType = HttpsRequest;
 
-    HttpsProtocol();
     ~HttpsProtocol() override = default;
 
-    virtual OwnPtr<Request> start_request(ConnectionFromClient&, const String& method, const URL&, const HashMap<String, String>& headers, ReadonlyBytes body) override;
+    static void install();
+
+private:
+    HttpsProtocol();
+
+    virtual OwnPtr<Request> start_request(i32, ConnectionFromClient&, ByteString const& method, const URL::URL&, HashMap<ByteString, ByteString> const& headers, ReadonlyBytes body, Core::ProxyData proxy_data = {}) override;
 };
 
 }

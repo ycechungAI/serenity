@@ -1,17 +1,25 @@
 /*
- * Copyright (c) 2020, Shannon Booth <shannon.ml.booth@gmail.com>
+ * Copyright (c) 2020, Shannon Booth <shannon@serenityos.org>
+ * Copyright (c) 2022, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <LibGfx/Triangle.h>
 
 namespace Gfx {
 
-String Triangle::to_string() const
+template<>
+ByteString Triangle<int>::to_byte_string() const
 {
-    return String::formatted("({},{},{})", m_a, m_b, m_c);
+    return ByteString::formatted("({},{},{})", m_a, m_b, m_c);
+}
+
+template<>
+ByteString Triangle<float>::to_byte_string() const
+{
+    return ByteString::formatted("({},{},{})", m_a, m_b, m_c);
 }
 
 }

@@ -24,7 +24,9 @@ ErrorOr<int> serenity_main(Main::Arguments)
     else
         TRY(Core::System::pledge("stdio inet accept unix rpath sendfd recvfd sigaction"));
 
+#ifdef SIGINFO
     signal(SIGINFO, [](int) { RequestServer::ConnectionCache::dump_jobs(); });
+#endif
 
     if constexpr (TLS_SSL_KEYLOG_DEBUG)
         TRY(Core::System::pledge("stdio inet accept unix cpath wpath rpath sendfd recvfd"));
@@ -32,6 +34,7 @@ ErrorOr<int> serenity_main(Main::Arguments)
         TRY(Core::System::pledge("stdio inet accept unix rpath sendfd recvfd"));
 
     // Ensure the certificates are read out here.
+    // FIXME: Allow specifying extra certificates on the command line, or in other configuration.
     [[maybe_unused]] auto& certs = DefaultRootCACertificates::the();
 
     Core::EventLoop event_loop;
@@ -42,16 +45,11 @@ ErrorOr<int> serenity_main(Main::Arguments)
         TRY(Core::System::unveil("/home/anon", "rwc"));
     TRY(Core::System::unveil(nullptr, nullptr));
 
-    [[maybe_unused]] auto gemini = make<RequestServer::GeminiProtocol>();
-    [[maybe_unused]] auto http = make<RequestServer::HttpProtocol>();
-    [[maybe_unused]] auto https = make<RequestServer::HttpsProtocol>();
+    RequestServer::GeminiProtocol::install();
+    RequestServer::HttpProtocol::install();
+    RequestServer::HttpsProtocol::install();
 
     auto client = TRY(IPC::take_over_accepted_client_from_system_server<RequestServer::ConnectionFromClient>());
 
-    auto result = event_loop.exec();
-
-    // FIXME: We exit instead of returning, so that protocol destructors don't get called.
-    //        The Protocol base class should probably do proper de-registration instead of
-    //        just VERIFY_NOT_REACHED().
-    exit(result);
+    return event_loop.exec();
 }

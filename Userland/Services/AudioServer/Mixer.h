@@ -1,117 +1,51 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2021, kleines Filmröllchen <filmroellchen@serenityos.org>
+ * Copyright (c) 2021-2023, kleines Filmröllchen <filmroellchen@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include "ClientAudioStream.h"
 #include "ConnectionFromClient.h"
 #include "FadingProperty.h"
 #include <AK/Atomic.h>
 #include <AK/Badge.h>
 #include <AK/ByteBuffer.h>
-#include <AK/NonnullRefPtrVector.h>
+#include <AK/Debug.h>
 #include <AK/Queue.h>
 #include <AK/RefCounted.h>
 #include <AK/WeakPtr.h>
-#include <LibAudio/Buffer.h>
+#include <LibAudio/Queue.h>
+#include <LibAudio/Resampler.h>
+#include <LibCore/ConfigFile.h>
 #include <LibCore/File.h>
 #include <LibCore/Timer.h>
 #include <LibThreading/ConditionVariable.h>
 #include <LibThreading/Mutex.h>
 #include <LibThreading/Thread.h>
-#include <sys/types.h>
 
 namespace AudioServer {
 
 // Headroom, i.e. fixed attenuation for all audio streams.
 // This is to prevent clipping when two streams with low headroom (e.g. normalized & compressed) are playing.
 constexpr double SAMPLE_HEADROOM = 0.95;
+// The size of the buffer in samples that the hardware receives through write() calls to the audio device.
+constexpr size_t HARDWARE_BUFFER_SIZE = 512;
+// The hardware buffer size in bytes; there's two channels of 16-bit samples.
+constexpr size_t HARDWARE_BUFFER_SIZE_BYTES = HARDWARE_BUFFER_SIZE * 2 * sizeof(i16);
 
-class ConnectionFromClient;
-
-class ClientAudioStream : public RefCounted<ClientAudioStream> {
+class Mixer : public Core::EventReceiver {
+    C_OBJECT_ABSTRACT(Mixer)
 public:
-    explicit ClientAudioStream(ConnectionFromClient&);
-    ~ClientAudioStream() = default;
-
-    bool is_full() const { return m_queue.size() >= 3; }
-    void enqueue(NonnullRefPtr<Audio::Buffer>&&);
-
-    bool get_next_sample(Audio::Sample& sample)
+    static ErrorOr<NonnullRefPtr<Mixer>> try_create(NonnullRefPtr<Core::ConfigFile> config)
     {
-        if (m_paused)
-            return false;
-
-        while (!m_current && !m_queue.is_empty())
-            m_current = m_queue.dequeue();
-
-        if (!m_current)
-            return false;
-
-        sample = m_current->samples()[m_position++];
-        if (m_remaining_samples > 0)
-            --m_remaining_samples;
-        ++m_played_samples;
-
-        if (m_position >= m_current->sample_count()) {
-            m_client->did_finish_playing_buffer({}, m_current->id());
-            m_current = nullptr;
-            m_position = 0;
-        }
-        return true;
+        // FIXME: Allow AudioServer to use other audio channels as well
+        auto device = TRY(Core::File::open("/dev/audio/0"sv, Core::File::OpenMode::Write));
+        return adopt_nonnull_ref_or_enomem(new (nothrow) Mixer(move(config), move(device)));
     }
 
-    ConnectionFromClient* client() { return m_client.ptr(); }
-
-    void clear(bool paused = false)
-    {
-        m_queue.clear();
-        m_position = 0;
-        m_remaining_samples = 0;
-        m_played_samples = 0;
-        m_current = nullptr;
-        m_paused = paused;
-    }
-
-    void set_paused(bool paused)
-    {
-        m_paused = paused;
-    }
-
-    int get_remaining_samples() const { return m_remaining_samples; }
-    int get_played_samples() const { return m_played_samples; }
-    int get_playing_buffer() const
-    {
-        if (m_current)
-            return m_current->id();
-        return -1;
-    }
-
-    FadingProperty<double>& volume() { return m_volume; }
-    double volume() const { return m_volume; }
-    void set_volume(double const volume) { m_volume = volume; }
-    bool is_muted() const { return m_muted; }
-    void set_muted(bool muted) { m_muted = muted; }
-
-private:
-    RefPtr<Audio::Buffer> m_current;
-    Queue<NonnullRefPtr<Audio::Buffer>> m_queue;
-    int m_position { 0 };
-    int m_remaining_samples { 0 };
-    int m_played_samples { 0 };
-    bool m_paused { false };
-    bool m_muted { false };
-
-    WeakPtr<ConnectionFromClient> m_client;
-    FadingProperty<double> m_volume { 1 };
-};
-
-class Mixer : public Core::Object {
-    C_OBJECT(Mixer)
-public:
     virtual ~Mixer() override = default;
 
     NonnullRefPtr<ClientAudioStream> create_queue(ConnectionFromClient&);
@@ -127,7 +61,7 @@ public:
     u32 audiodevice_get_sample_rate() const;
 
 private:
-    Mixer(NonnullRefPtr<Core::ConfigFile> config);
+    Mixer(NonnullRefPtr<Core::ConfigFile> config, NonnullOwnPtr<Core::File> device);
 
     void request_setting_sync();
 
@@ -135,7 +69,8 @@ private:
     Threading::Mutex m_pending_mutex;
     Threading::ConditionVariable m_mixing_necessary { m_pending_mutex };
 
-    RefPtr<Core::File> m_device;
+    NonnullOwnPtr<Core::File> m_device;
+    mutable Optional<u32> m_cached_sample_rate {};
 
     NonnullRefPtr<Threading::Thread> m_sound_thread;
 
@@ -145,7 +80,8 @@ private:
     NonnullRefPtr<Core::ConfigFile> m_config;
     RefPtr<Core::Timer> m_config_write_timer;
 
-    static u8 m_zero_filled_buffer[4096];
+    Array<u8, HARDWARE_BUFFER_SIZE_BYTES> m_stream_buffer;
+    Array<u8, HARDWARE_BUFFER_SIZE_BYTES> const m_zero_filled_buffer {};
 
     void mix();
 };

@@ -4,8 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Format.h>
+#include <AK/StringView.h>
 #include <assert.h>
+#include <bits/pthread_cancel.h>
 #include <errno.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -84,7 +85,7 @@ int sigaddset(sigset_t* set, int sig)
 }
 
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/sigaltstack.html
-int sigaltstack(const stack_t* ss, stack_t* old_ss)
+int sigaltstack(stack_t const* ss, stack_t* old_ss)
 {
     int rc = syscall(SC_sigaltstack, ss, old_ss);
     __RETURN_WITH_ERRNO(rc, rc, -1);
@@ -101,8 +102,22 @@ int sigdelset(sigset_t* set, int sig)
     return 0;
 }
 
+// https://pubs.opengroup.org/onlinepubs/009696699/functions/siginterrupt.html
+int siginterrupt(int sig, int flag)
+{
+    struct sigaction act;
+    int rc = sigaction(sig, nullptr, &act);
+    if (rc < 0)
+        return rc;
+    if (flag)
+        act.sa_flags &= ~SA_RESTART;
+    else
+        act.sa_flags |= SA_RESTART;
+    return sigaction(sig, &act, nullptr);
+}
+
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/sigismember.html
-int sigismember(const sigset_t* set, int sig)
+int sigismember(sigset_t const* set, int sig)
 {
     if (sig < 1 || sig > 32) {
         errno = EINVAL;
@@ -114,7 +129,7 @@ int sigismember(const sigset_t* set, int sig)
 }
 
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/sigprocmask.html
-int sigprocmask(int how, const sigset_t* set, sigset_t* old_set)
+int sigprocmask(int how, sigset_t const* set, sigset_t* old_set)
 {
     int rc = syscall(SC_sigprocmask, how, set, old_set);
     __RETURN_WITH_ERRNO(rc, rc, -1);
@@ -127,39 +142,53 @@ int sigpending(sigset_t* set)
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
-const char* sys_siglist[NSIG] = {
-    "Invalid signal number",
-    "Hangup",
-    "Interrupt",
-    "Quit",
-    "Illegal instruction",
-    "Trap",
-    "Aborted",
-    "Bus error",
-    "Division by zero",
-    "Killed",
-    "User signal 1",
-    "Segmentation violation",
-    "User signal 2",
-    "Broken pipe",
-    "Alarm clock",
-    "Terminated",
-    "Stack fault",
-    "Child exited",
-    "Continued",
-    "Stopped (signal)",
-    "Stopped",
-    "Stopped (tty input)",
-    "Stopped (tty output)",
-    "Urgent I/O condition)",
-    "CPU limit exceeded",
-    "File size limit exceeded",
-    "Virtual timer expired",
-    "Profiling timer expired",
-    "Window changed",
-    "I/O possible",
-    "Power failure",
-    "Bad system call",
+// Signal 0 (the null signal) and Signal 32 (SIGCANCEL) are deliberately set to null here.
+// They are not intended to be resolved by strsignal(), getsignalname() or getsignalbyname().
+#define ENUMERATE_SIGNALS                                  \
+    __ENUMERATE_SIGNAL(nullptr, nullptr)                   \
+    __ENUMERATE_SIGNAL("HUP", "Hangup")                    \
+    __ENUMERATE_SIGNAL("INT", "Interrupt")                 \
+    __ENUMERATE_SIGNAL("QUIT", "Quit")                     \
+    __ENUMERATE_SIGNAL("ILL", "Illegal instruction")       \
+    __ENUMERATE_SIGNAL("TRAP", "Trap")                     \
+    __ENUMERATE_SIGNAL("ABRT", "Aborted")                  \
+    __ENUMERATE_SIGNAL("BUS", "Bus error")                 \
+    __ENUMERATE_SIGNAL("FPE", "Division by zero")          \
+    __ENUMERATE_SIGNAL("KILL", "Killed")                   \
+    __ENUMERATE_SIGNAL("USR1", "User signal 1")            \
+    __ENUMERATE_SIGNAL("SEGV", "Segmentation violation")   \
+    __ENUMERATE_SIGNAL("USR2", "User signal 2")            \
+    __ENUMERATE_SIGNAL("PIPE", "Broken pipe")              \
+    __ENUMERATE_SIGNAL("ALRM", "Alarm clock")              \
+    __ENUMERATE_SIGNAL("TERM", "Terminated")               \
+    __ENUMERATE_SIGNAL("STKFLT", "Stack fault")            \
+    __ENUMERATE_SIGNAL("CHLD", "Child exited")             \
+    __ENUMERATE_SIGNAL("CONT", "Continued")                \
+    __ENUMERATE_SIGNAL("STOP", "Stopped (signal)")         \
+    __ENUMERATE_SIGNAL("TSTP", "Stopped")                  \
+    __ENUMERATE_SIGNAL("TTIN", "Stopped (tty input)")      \
+    __ENUMERATE_SIGNAL("TTOU", "Stopped (tty output)")     \
+    __ENUMERATE_SIGNAL("URG", "Urgent I/O condition)")     \
+    __ENUMERATE_SIGNAL("XCPU", "CPU limit exceeded")       \
+    __ENUMERATE_SIGNAL("XFSZ", "File size limit exceeded") \
+    __ENUMERATE_SIGNAL("VTALRM", "Virtual timer expired")  \
+    __ENUMERATE_SIGNAL("PROF", "Profiling timer expired")  \
+    __ENUMERATE_SIGNAL("WINCH", "Window changed")          \
+    __ENUMERATE_SIGNAL("IO", "I/O possible")               \
+    __ENUMERATE_SIGNAL("INFO", "Power failure")            \
+    __ENUMERATE_SIGNAL("SYS", "Bad system call")           \
+    __ENUMERATE_SIGNAL(nullptr, nullptr)
+
+char const* sys_siglist[NSIG] = {
+#define __ENUMERATE_SIGNAL(name, description) description,
+    ENUMERATE_SIGNALS
+#undef __ENUMERATE_SIGNAL
+};
+
+char const* sys_signame[NSIG] = {
+#define __ENUMERATE_SIGNAL(name, description) name,
+    ENUMERATE_SIGNALS
+#undef __ENUMERATE_SIGNAL
 };
 
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/siglongjmp.html
@@ -173,14 +202,19 @@ void siglongjmp(jmp_buf env, int val)
 }
 
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/sigsuspend.html
-int sigsuspend(const sigset_t* set)
+int sigsuspend(sigset_t const* set)
 {
-    return pselect(0, nullptr, nullptr, nullptr, nullptr, set);
+    __pthread_maybe_cancel();
+
+    int rc = syscall(SC_sigsuspend, set);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
 // https://pubs.opengroup.org/onlinepubs/009604499/functions/sigwait.html
 int sigwait(sigset_t const* set, int* sig)
 {
+    __pthread_maybe_cancel();
+
     int rc = syscall(Syscall::SC_sigtimedwait, set, nullptr, nullptr);
     VERIFY(rc != 0);
     if (rc < 0)
@@ -198,66 +232,39 @@ int sigwaitinfo(sigset_t const* set, siginfo_t* info)
 // https://pubs.opengroup.org/onlinepubs/9699919799/functions/sigtimedwait.html
 int sigtimedwait(sigset_t const* set, siginfo_t* info, struct timespec const* timeout)
 {
+    __pthread_maybe_cancel();
+
     int rc = syscall(Syscall::SC_sigtimedwait, set, info, timeout);
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
-const char* sys_signame[] = {
-    "INVAL",
-    "HUP",
-    "INT",
-    "QUIT",
-    "ILL",
-    "TRAP",
-    "ABRT",
-    "BUS",
-    "FPE",
-    "KILL",
-    "USR1",
-    "SEGV",
-    "USR2",
-    "PIPE",
-    "ALRM",
-    "TERM",
-    "STKFLT",
-    "CHLD",
-    "CONT",
-    "STOP",
-    "TSTP",
-    "TTIN",
-    "TTOU",
-    "URG",
-    "XCPU",
-    "XFSZ",
-    "VTALRM",
-    "PROF",
-    "WINCH",
-    "IO",
-    "INFO",
-    "SYS",
-};
-
-static_assert(sizeof(sys_signame) == sizeof(const char*) * NSIG);
-
-int getsignalbyname(const char* name)
+int getsignalbyname(char const* name)
 {
     VERIFY(name);
-    StringView name_sv(name);
-    for (size_t i = 0; i < NSIG; ++i) {
-        auto signal_name = StringView(sys_signame[i]);
-        if (signal_name == name_sv || (name_sv.starts_with("SIG") && signal_name == name_sv.substring_view(3)))
+    StringView name_sv { name, strlen(name) };
+    for (size_t i = 1; i < NSIG; ++i) {
+        if (!sys_signame[i])
+            continue;
+
+        StringView signal_name { sys_signame[i], strlen(sys_signame[i]) };
+        if (signal_name == name_sv || (name_sv.starts_with("SIG"sv) && signal_name == name_sv.substring_view(3)))
             return i;
     }
     errno = EINVAL;
     return -1;
 }
 
-const char* getsignalname(int signal)
+char const* getsignalname(int signal)
 {
-    if (signal < 0 || signal >= NSIG) {
+    if (signal <= 0 || signal >= NSIG) {
         errno = EINVAL;
         return nullptr;
     }
-    return sys_signame[signal];
+
+    auto const* result = sys_signame[signal];
+    if (!result)
+        errno = EINVAL;
+
+    return result;
 }
 }

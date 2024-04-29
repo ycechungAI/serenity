@@ -14,15 +14,20 @@
 namespace GUI {
 
 class WizardPage : public AbstractWizardPage {
-    C_OBJECT(WizardPage);
+    C_OBJECT_ABSTRACT(WizardPage);
 
-    Widget& body_widget() { return *m_body_widget; };
+    static ErrorOr<NonnullRefPtr<WizardPage>> create(StringView title, StringView subtitle);
 
-    void set_page_title(const String& text);
-    void set_page_subtitle(const String& text);
+    Widget& body_widget() { return *m_body_widget; }
+
+    void set_page_title(String);
+    void set_page_subtitle(String);
+
+protected:
+    virtual ErrorOr<void> build(String title, String subtitle);
 
 private:
-    explicit WizardPage(const String& title_text, const String& subtitle_text);
+    WizardPage() = default;
 
     RefPtr<Widget> m_body_widget;
 

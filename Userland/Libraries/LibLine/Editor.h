@@ -9,19 +9,20 @@
 
 #include <AK/BinarySearch.h>
 #include <AK/ByteBuffer.h>
+#include <AK/ByteString.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
+#include <AK/RedBlackTree.h>
 #include <AK/Result.h>
-#include <AK/String.h>
 #include <AK/Traits.h>
 #include <AK/Utf32View.h>
 #include <AK/Utf8View.h>
 #include <AK/Vector.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/EventLoop.h>
+#include <LibCore/EventReceiver.h>
 #include <LibCore/Notifier.h>
-#include <LibCore/Object.h>
 #include <LibLine/KeyCallbackMachine.h>
 #include <LibLine/Span.h>
 #include <LibLine/StringMetrics.h>
@@ -41,7 +42,7 @@ struct KeyBinding {
         InternalFunction,
         Insertion,
     } kind { Kind::InternalFunction };
-    String binding;
+    ByteString binding;
 };
 
 struct Configuration {
@@ -66,7 +67,7 @@ struct Configuration {
     };
 
     struct DefaultTextEditor {
-        String command;
+        ByteString command;
     };
 
     Configuration()
@@ -90,13 +91,13 @@ struct Configuration {
         enable_bracketed_paste = flags & Flags::BracketedPaste;
     }
 
-    static Configuration from_config(StringView libname = "line");
+    static Configuration from_config(StringView libname = "line"sv);
 
     RefreshBehavior refresh_behavior { RefreshBehavior::Lazy };
     SignalHandler m_signal_mode { SignalHandler::WithSignalHandlers };
     OperationMode operation_mode { OperationMode::Unset };
     Vector<KeyBinding> keybindings;
-    String m_default_text_editor {};
+    ByteString m_default_text_editor {};
     bool enable_bracketed_paste { false };
 };
 
@@ -104,9 +105,13 @@ struct Configuration {
     M(clear_screen)                            \
     M(cursor_left_character)                   \
     M(cursor_left_word)                        \
+    M(cursor_left_nonspace_word)               \
     M(cursor_right_character)                  \
     M(cursor_right_word)                       \
+    M(cursor_right_nonspace_word)              \
     M(enter_search)                            \
+    M(search_character_backwards)              \
+    M(search_character_forwards)               \
     M(erase_character_backwards)               \
     M(erase_character_forwards)                \
     M(erase_to_beginning)                      \
@@ -121,8 +126,10 @@ struct Configuration {
     M(transpose_characters)                    \
     M(transpose_words)                         \
     M(insert_last_words)                       \
+    M(insert_last_erased)                      \
     M(erase_alnum_word_backwards)              \
     M(erase_alnum_word_forwards)               \
+    M(erase_spaces)                            \
     M(capitalize_word)                         \
     M(lowercase_word)                          \
     M(uppercase_word)                          \
@@ -131,7 +138,7 @@ struct Configuration {
 #define EDITOR_INTERNAL_FUNCTION(name) \
     [](auto& editor) { editor.name();  return false; }
 
-class Editor : public Core::Object {
+class Editor : public Core::EventReceiver {
     C_OBJECT(Editor);
 
 public:
@@ -143,15 +150,15 @@ public:
 
     ~Editor();
 
-    Result<String, Error> get_line(String const& prompt);
+    Result<ByteString, Error> get_line(ByteString const& prompt);
 
     void initialize();
 
     void refetch_default_termios();
 
-    void add_to_history(String const& line);
-    bool load_history(String const& path);
-    bool save_history(String const& path);
+    void add_to_history(ByteString const& line);
+    bool load_history(ByteString const& path);
+    bool save_history(ByteString const& path);
     auto const& history() const { return m_history; }
     bool is_history_dirty() const { return m_history_dirty; }
 
@@ -159,8 +166,8 @@ public:
     void register_key_input_callback(Vector<Key> keys, Function<bool(Editor&)> callback) { m_callback_machine.register_key_input_callback(move(keys), move(callback)); }
     void register_key_input_callback(Key key, Function<bool(Editor&)> callback) { register_key_input_callback(Vector<Key> { key }, move(callback)); }
 
-    static StringMetrics actual_rendered_string_metrics(StringView);
-    static StringMetrics actual_rendered_string_metrics(Utf32View const&);
+    static StringMetrics actual_rendered_string_metrics(StringView, RedBlackTree<u32, Optional<Style::Mask>> const& masks = {}, Optional<size_t> maximum_line_width = {});
+    static StringMetrics actual_rendered_string_metrics(Utf32View const&, RedBlackTree<u32, Optional<Style::Mask>> const& masks = {}, Optional<size_t> maximum_line_width = {});
 
     Function<Vector<CompletionSuggestion>(Editor const&)> on_tab_complete;
     Function<void(Utf32View, Editor&)> on_paste;
@@ -181,8 +188,8 @@ public:
 
 #undef __ENUMERATE_EDITOR_INTERNAL_FUNCTION
 
-    void interrupted();
-    void resized();
+    ErrorOr<void> interrupted();
+    ErrorOr<void> resized();
 
     size_t cursor() const { return m_cursor; }
     void set_cursor(size_t cursor)
@@ -191,26 +198,26 @@ public:
             cursor = m_buffer.size();
         m_cursor = cursor;
     }
-    const Vector<u32, 1024>& buffer() const { return m_buffer; }
+    Vector<u32, 1024> const& buffer() const { return m_buffer; }
     u32 buffer_at(size_t pos) const { return m_buffer.at(pos); }
-    String line() const { return line(m_buffer.size()); }
-    String line(size_t up_to_index) const;
+    ByteString line() const { return line(m_buffer.size()); }
+    ByteString line(size_t up_to_index) const;
 
     // Only makes sense inside a character_input callback or on_* callback.
-    void set_prompt(String const& prompt)
+    void set_prompt(ByteString const& prompt)
     {
         if (m_cached_prompt_valid)
             m_old_prompt_metrics = m_cached_prompt_metrics;
         m_cached_prompt_valid = false;
-        m_cached_prompt_metrics = actual_rendered_string_metrics(prompt);
+        m_cached_prompt_metrics = actual_rendered_string_metrics(prompt, {});
         m_new_prompt = prompt;
     }
 
     void clear_line();
-    void insert(String const&);
+    void insert(ByteString const&);
     void insert(StringView);
     void insert(Utf32View const&);
-    void insert(const u32);
+    void insert(u32 const);
     void stylize(Span const&, Style const&);
     void strip_styles(bool strip_anchored = false);
 
@@ -239,35 +246,36 @@ public:
 
     bool is_editing() const { return m_is_editing; }
 
-    const Utf32View buffer_view() const { return { m_buffer.data(), m_buffer.size() }; }
+    Utf32View const buffer_view() const { return { m_buffer.data(), m_buffer.size() }; }
+
+    auto prohibit_input()
+    {
+        auto previous_value = m_prohibit_input_processing;
+        m_prohibit_input_processing = true;
+        m_have_unprocessed_read_event = false;
+        return ScopeGuard {
+            [this, previous_value] {
+                m_prohibit_input_processing = previous_value;
+                if (!m_prohibit_input_processing && m_have_unprocessed_read_event)
+                    handle_read_event().release_value_but_fixme_should_propagate_errors();
+            }
+        };
+    }
 
 private:
     explicit Editor(Configuration configuration = Configuration::from_config());
 
     void set_default_keybinds();
 
-    enum VTState {
-        Free = 1,
-        Escape = 3,
-        Bracket = 5,
-        BracketArgsSemi = 7,
-        Title = 9,
-    };
-
-    static VTState actual_rendered_string_length_step(StringMetrics&, size_t, StringMetrics::LineMetrics& current_line, u32, u32, VTState);
-
     enum LoopExitCode {
         Exit = 0,
         Retry
     };
 
-    // FIXME: Port to Core::Property
-    void save_to(JsonObject&);
-
-    void try_update_once();
+    ErrorOr<void> try_update_once();
     void handle_interrupt_event();
-    void handle_read_event();
-    void handle_resize_event(bool reset_origin);
+    ErrorOr<void> handle_read_event();
+    ErrorOr<void> handle_resize_event(bool reset_origin);
 
     void ensure_free_lines_from_origin(size_t count);
 
@@ -313,23 +321,25 @@ private:
         m_prompt_lines_at_suggestion_initiation = 0;
         m_refresh_needed = true;
         m_input_error.clear();
-        m_returned_line = String::empty();
+        m_returned_line = ByteString::empty();
         m_chars_touched_in_the_middle = 0;
         m_drawn_end_of_line_offset = 0;
         m_drawn_spans = {};
         m_paste_buffer.clear_with_capacity();
     }
 
-    void refresh_display();
-    void cleanup();
-    void cleanup_suggestions();
-    void really_quit_event_loop();
+    ErrorOr<void> refresh_display();
+    ErrorOr<void> cleanup();
+    ErrorOr<void> cleanup_suggestions();
+    ErrorOr<void> really_quit_event_loop();
 
     void restore()
     {
         VERIFY(m_initialized);
         tcsetattr(0, TCSANOW, &m_default_termios);
         m_initialized = false;
+        if (m_configuration.enable_bracketed_paste)
+            warn("\x1b[?2004l");
         for (auto id : m_signal_handlers)
             Core::EventLoop::unregister_signal(id);
     }
@@ -350,7 +360,7 @@ private:
         if (cursor > m_cursor)
             cursor = m_cursor;
         return current_prompt_metrics().lines_with_addition(
-            actual_rendered_string_metrics(buffer_view().substring_view(0, cursor)),
+            actual_rendered_string_metrics(buffer_view().substring_view(0, cursor), m_current_masks),
             m_num_columns);
     }
 
@@ -359,7 +369,7 @@ private:
         auto cursor = m_drawn_cursor;
         if (cursor > m_cursor)
             cursor = m_cursor;
-        auto buffer_metrics = actual_rendered_string_metrics(buffer_view().substring_view(0, cursor));
+        auto buffer_metrics = actual_rendered_string_metrics(buffer_view().substring_view(0, cursor), m_current_masks);
         return current_prompt_metrics().offset_with_addition(buffer_metrics, m_num_columns);
     }
 
@@ -385,7 +395,7 @@ private:
     }
 
     void recalculate_origin();
-    void reposition_cursor(OutputStream&, bool to_end = false);
+    ErrorOr<void> reposition_cursor(Stream&, bool to_end = false);
 
     struct CodepointRange {
         size_t start { 0 };
@@ -413,7 +423,7 @@ private:
     ByteBuffer m_pending_chars;
     Vector<char, 512> m_incomplete_data;
     Optional<Error> m_input_error;
-    String m_returned_line;
+    ByteString m_returned_line;
 
     size_t m_cursor { 0 };
     size_t m_drawn_cursor { 0 };
@@ -425,6 +435,7 @@ private:
     size_t m_num_lines { 1 };
     size_t m_previous_num_columns { 0 };
     size_t m_extra_forward_lines { 0 };
+    size_t m_shown_lines { 0 };
     StringMetrics m_cached_prompt_metrics;
     StringMetrics m_old_prompt_metrics;
     StringMetrics m_cached_buffer_metrics;
@@ -434,11 +445,13 @@ private:
     // Exact position before our prompt in the terminal.
     size_t m_origin_row { 0 };
     size_t m_origin_column { 0 };
+    bool m_expected_origin_changed { false };
     bool m_has_origin_reset_scheduled { false };
 
     OwnPtr<SuggestionDisplay> m_suggestion_display;
+    Vector<u32, 32> m_remembered_suggestion_static_data;
 
-    String m_new_prompt;
+    ByteString m_new_prompt;
 
     SuggestionManager m_suggestion_manager;
 
@@ -462,13 +475,14 @@ private:
 
     // FIXME: This should be something more take_first()-friendly.
     struct HistoryEntry {
-        String entry;
+        ByteString entry;
         time_t timestamp;
     };
     Vector<HistoryEntry> m_history;
     size_t m_history_cursor { 0 };
     size_t m_history_capacity { 1024 };
     bool m_history_dirty { false };
+    static ErrorOr<Vector<HistoryEntry>> try_load_history(StringView path);
 
     enum class InputState {
         Free,
@@ -491,15 +505,20 @@ private:
         bool contains_up_to_offset(Spans const& other, size_t offset) const;
     } m_drawn_spans, m_current_spans;
 
+    RedBlackTree<u32, Optional<Style::Mask>> m_current_masks;
+
     RefPtr<Core::Notifier> m_notifier;
 
     Vector<u32> m_paste_buffer;
+    Vector<u32> m_last_erased;
 
     bool m_initialized { false };
     bool m_refresh_needed { false };
     Vector<int, 2> m_signal_handlers;
 
     bool m_is_editing { false };
+    bool m_prohibit_input_processing { false };
+    bool m_have_unprocessed_read_event { false };
 
     Configuration m_configuration;
 };

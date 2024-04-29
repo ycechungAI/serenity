@@ -13,28 +13,19 @@ namespace Web::Layout {
 
 // https://www.w3.org/TR/css-display/#block-container
 class BlockContainer : public Box {
+    JS_CELL(BlockContainer, Box);
+
 public:
     BlockContainer(DOM::Document&, DOM::Node*, NonnullRefPtr<CSS::StyleProperties>);
-    BlockContainer(DOM::Document&, DOM::Node*, CSS::ComputedValues);
+    BlockContainer(DOM::Document&, DOM::Node*, NonnullOwnPtr<CSS::ComputedValues>);
     virtual ~BlockContainer() override;
 
-    BlockContainer* previous_sibling() { return verify_cast<BlockContainer>(Node::previous_sibling()); }
-    const BlockContainer* previous_sibling() const { return verify_cast<BlockContainer>(Node::previous_sibling()); }
-    BlockContainer* next_sibling() { return verify_cast<BlockContainer>(Node::next_sibling()); }
-    const BlockContainer* next_sibling() const { return verify_cast<BlockContainer>(Node::next_sibling()); }
+    Painting::PaintableWithLines const* paintable_with_lines() const;
 
-    bool is_scrollable() const;
-    const Gfx::FloatPoint& scroll_offset() const { return m_scroll_offset; }
-    void set_scroll_offset(const Gfx::FloatPoint&);
-
-    Painting::PaintableWithLines const* paint_box() const;
-
-    virtual RefPtr<Painting::Paintable> create_paintable() const override;
+    virtual JS::GCPtr<Painting::Paintable> create_paintable() const override;
 
 private:
     virtual bool is_block_container() const final { return true; }
-
-    Gfx::FloatPoint m_scroll_offset;
 };
 
 template<>

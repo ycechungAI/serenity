@@ -1,8 +1,7 @@
-@GUI::Frame {
+@KeyboardSettings::KeyboardSettingsWidget {
     fill_with_background_color: true
     layout: @GUI::VerticalBoxLayout {
-        margins: [10]
-        spacing: 5
+        margins: [8]
     }
 
     @GUI::GroupBox {
@@ -17,10 +16,10 @@
             fixed_width: 32
             layout: @GUI::VerticalBoxLayout {}
 
-            @GUI::Label {
+            @GUI::ImageWidget {
                 fixed_width: 32
                 fixed_height: 32
-                icon: "/res/icons/32x32/app-keyboard-mapper.png"
+                bitmap: "/res/icons/32x32/app-keyboard-mapper.png"
             }
         }
 
@@ -41,18 +40,18 @@
 
                 @GUI::Button {
                     name: "activate_keymap_button"
-                    text: "Activate keymap"
+                    text: "Activate Keymap"
                     enabled: false
                 }
 
                 @GUI::Button {
                     name: "add_keymap_button"
-                    text: "Add keymap"
+                    text: "Add Keymap..."
                 }
 
                 @GUI::Button {
                     name: "remove_keymap_button"
-                    text: "Remove keymap"
+                    text: "Remove Keymap"
                     enabled: false
                 }
             }
@@ -70,10 +69,10 @@
             fixed_width: 32
             layout: @GUI::VerticalBoxLayout {}
 
-            @GUI::Label {
+            @GUI::ImageWidget {
                 fixed_width: 32
                 fixed_height: 32
-                icon: "/res/icons/32x32/app-keyboard-settings.png"
+                bitmap: "/res/icons/32x32/app-keyboard-settings.png"
             }
         }
 
@@ -114,15 +113,29 @@
             spacing: 16
         }
 
-        @GUI::Label {
+        @GUI::ImageWidget {
             fixed_width: 32
             fixed_height: 32
-            icon: "/res/icons/32x32/app-calculator.png"
+            bitmap: "/res/icons/32x32/app-calculator.png"
         }
 
         @GUI::CheckBox {
             text: "Enable Num Lock on login"
             name: "num_lock_checkbox"
+        }
+    }
+
+    @GUI::GroupBox {
+        title: "Caps Lock"
+        fixed_height: 60
+        layout: @GUI::HorizontalBoxLayout {
+            margins: [16, 8, 8]
+            spacing: 16
+        }
+
+        @GUI::CheckBox {
+            text: "Use Caps Lock as an additional Ctrl"
+            name: "caps_lock_remapped_to_ctrl_checkbox"
         }
     }
 }

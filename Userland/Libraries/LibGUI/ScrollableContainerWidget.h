@@ -24,11 +24,13 @@ public:
 protected:
     virtual void did_scroll() override;
     virtual void resize_event(GUI::ResizeEvent&) override;
+    virtual void layout_relevant_change_occurred() override;
 
 private:
     void update_widget_size();
     void update_widget_position();
-    virtual bool load_from_gml_ast(NonnullRefPtr<GUI::GML::Node> ast, RefPtr<Core::Object> (*unregistered_child_handler)(const String&)) override;
+    void update_widget_min_size();
+    virtual ErrorOr<void> load_from_gml_ast(NonnullRefPtr<GUI::GML::Node const> ast, UnregisteredChildHandler) override;
 
     ScrollableContainerWidget();
 

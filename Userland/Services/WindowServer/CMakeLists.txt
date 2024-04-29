@@ -25,20 +25,25 @@ set(SOURCES
     MultiScaleBitmaps.cpp
     Overlays.cpp
     Screen.cpp
+    HardwareScreenBackend.cpp
+    VirtualScreenBackend.cpp
     ScreenLayout.cpp
     Window.cpp
     WindowFrame.cpp
     WindowManager.cpp
     WindowStack.cpp
     WindowSwitcher.cpp
-    WindowServerEndpoint.h
-    WindowClientEndpoint.h
-    WindowManagerServerEndpoint.h
-    WindowManagerClientEndpoint.h
     WMConnectionFromClient.cpp
     KeymapSwitcher.cpp
 )
 
+set(GENERATED_SOURCES
+    WindowServerEndpoint.h
+    WindowClientEndpoint.h
+    WindowManagerServerEndpoint.h
+    WindowManagerClientEndpoint.h
+)
+
 serenity_bin(WindowServer)
-target_link_libraries(WindowServer LibCore LibGfx LibThreading LibIPC LibMain)
+target_link_libraries(WindowServer PRIVATE LibCore LibFileSystem LibKeyboard LibGfx LibThreading LibIPC LibMain)
 serenity_install_headers(Services/WindowServer)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, Arne Elster (arne@elster.li)
+ * Copyright (c) 2021, Arne Elster <arne@elster.li>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,7 +9,7 @@
 #include <AK/FixedArray.h>
 #include <AK/Math.h>
 
-namespace LibDSP {
+namespace DSP {
 
 template<typename T>
 class Window final {
@@ -27,17 +27,17 @@ public:
     constexpr static FixedArray<T> blackman_harris(size_t size) { return make_window(size, calculate_blackman_harris); }
 
 private:
-    constexpr static double calculate_hann(size_t index, size_t size)
+    constexpr static float calculate_hann(size_t index, size_t size)
     {
-        return 0.5 * (1 - AK::cos((2 * AK::Pi<T> * index) / (size - 1)));
+        return 0.5f * (1 - AK::cos<float>((2 * AK::Pi<T> * index) / (size - 1)));
     }
 
-    constexpr static double calculate_hamming(size_t index, size_t size)
+    constexpr static float calculate_hamming(size_t index, size_t size)
     {
-        return 0.54 - 0.46 * AK::cos((2 * AK::Pi<T> * index) / (size - 1));
+        return 0.54f - 0.46f * AK::cos<float>((2 * AK::Pi<T> * index) / (size - 1));
     }
 
-    constexpr static double calculate_blackman_harris(size_t index, size_t size)
+    constexpr static float calculate_blackman_harris(size_t index, size_t size)
     {
         T const a0 = 0.35875;
         T const a1 = 0.48829;

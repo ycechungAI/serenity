@@ -9,7 +9,7 @@
 #include "History.h"
 #include "ManualModel.h"
 #include <LibGUI/FilteringProxyModel.h>
-#include <LibWeb/OutOfProcessWebView.h>
+#include <LibWebView/OutOfProcessWebView.h>
 
 namespace Help {
 
@@ -19,15 +19,17 @@ class MainWidget final : public GUI::Widget {
 public:
     virtual ~MainWidget() override = default;
 
-    ErrorOr<void> initialize_fallibles(GUI::Window&);
-    void set_start_page(String const& page, int section);
+    static ErrorOr<NonnullRefPtr<MainWidget>> try_create();
+
+    ErrorOr<void> initialize(GUI::Window&);
+    ErrorOr<void> set_start_page(Vector<StringView, 2> query_parameters);
 
 private:
     MainWidget();
 
-    void open_url(URL const&);
-    void open_page(String const& path);
-    void open_external(URL const&);
+    void open_url(URL::URL const&);
+    void open_page(Optional<String> const& path);
+    void open_external(URL::URL const&);
 
     History m_history;
     RefPtr<GUI::Menu> m_context_menu;
@@ -45,7 +47,7 @@ private:
     RefPtr<GUI::TextBox> m_search_box;
     RefPtr<GUI::ListView> m_search_view;
     RefPtr<GUI::TreeView> m_browse_view;
-    RefPtr<Web::OutOfProcessWebView> m_web_view;
+    RefPtr<WebView::OutOfProcessWebView> m_web_view;
 
     RefPtr<GUI::Toolbar> m_toolbar;
     RefPtr<GUI::Statusbar> m_statusbar;

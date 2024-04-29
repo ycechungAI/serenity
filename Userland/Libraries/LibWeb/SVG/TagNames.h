@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Error.h>
 #include <AK/FlyString.h>
 
 namespace Web::SVG::TagNames {
@@ -20,17 +21,30 @@ namespace Web::SVG::TagNames {
     __ENUMERATE_SVG_TAG(polyline)   \
     __ENUMERATE_SVG_TAG(rect)       \
     __ENUMERATE_SVG_TAG(svg)        \
-    __ENUMERATE_SVG_TAG(text)
+    __ENUMERATE_SVG_TAG(text)       \
+    __ENUMERATE_SVG_TAG(textPath)   \
+    __ENUMERATE_SVG_TAG(tspan)
 
-#define ENUMERATE_SVG_TAGS             \
-    ENUMERATE_SVG_GRAPHICS_TAGS        \
-    __ENUMERATE_SVG_TAG(desc)          \
-    __ENUMERATE_SVG_TAG(foreignObject) \
-    __ENUMERATE_SVG_TAG(script)        \
-    __ENUMERATE_SVG_TAG(title)
+#define ENUMERATE_SVG_TAGS              \
+    ENUMERATE_SVG_GRAPHICS_TAGS         \
+    __ENUMERATE_SVG_TAG(clipPath)       \
+    __ENUMERATE_SVG_TAG(defs)           \
+    __ENUMERATE_SVG_TAG(desc)           \
+    __ENUMERATE_SVG_TAG(foreignObject)  \
+    __ENUMERATE_SVG_TAG(linearGradient) \
+    __ENUMERATE_SVG_TAG(mask)           \
+    __ENUMERATE_SVG_TAG(radialGradient) \
+    __ENUMERATE_SVG_TAG(script)         \
+    __ENUMERATE_SVG_TAG(stop)           \
+    __ENUMERATE_SVG_TAG(style)          \
+    __ENUMERATE_SVG_TAG(symbol)         \
+    __ENUMERATE_SVG_TAG(title)          \
+    __ENUMERATE_SVG_TAG(use)
 
 #define __ENUMERATE_SVG_TAG(name) extern FlyString name;
 ENUMERATE_SVG_TAGS
 #undef __ENUMERATE_SVG_TAG
+
+void initialize_strings();
 
 }

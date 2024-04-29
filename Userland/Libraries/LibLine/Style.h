@@ -6,10 +6,10 @@
 
 #pragma once
 
-#include <AK/String.h>
+#include <AK/ByteString.h>
 #include <AK/Types.h>
+#include <AK/Utf8View.h>
 #include <AK/Vector.h>
-#include <stdlib.h>
 
 namespace Line {
 
@@ -71,7 +71,7 @@ public:
             : Color(r, g, b)
         {
         }
-        String to_vt_escape() const;
+        ByteString to_vt_escape() const;
     };
 
     struct Foreground : public Color {
@@ -84,7 +84,7 @@ public:
         {
         }
 
-        String to_vt_escape() const;
+        ByteString to_vt_escape() const;
     };
 
     struct Hyperlink {
@@ -98,12 +98,34 @@ public:
 
         Hyperlink() = default;
 
-        String to_vt_escape(bool starting) const;
+        ByteString to_vt_escape(bool starting) const;
 
         bool is_empty() const { return !m_has_link; }
 
-        String m_link;
+        ByteString m_link;
         bool m_has_link { false };
+    };
+
+    struct Mask {
+        bool operator==(Mask const& other) const
+        {
+            return other.mode == mode && other.replacement == replacement;
+        }
+
+        enum class Mode {
+            ReplaceEntireSelection,
+            ReplaceEachCodePointInSelection,
+        };
+        explicit Mask(StringView replacement, Mode mode = Mode::ReplaceEntireSelection)
+            : replacement(replacement)
+            , replacement_view(this->replacement)
+            , mode(mode)
+        {
+        }
+
+        ByteString replacement;
+        mutable Utf8View replacement_view;
+        Mode mode;
     };
 
     static constexpr UnderlineTag Underline {};
@@ -123,7 +145,7 @@ public:
 
     static Style reset_style()
     {
-        return { Foreground(XtermColor::Default), Background(XtermColor::Default), Hyperlink("") };
+        return { Foreground(XtermColor::Default), Background(XtermColor::Default), Hyperlink(""sv) };
     }
 
     Style unified_with(Style const& other, bool prefer_other = true) const
@@ -141,6 +163,9 @@ public:
     Background background() const { return m_background; }
     Foreground foreground() const { return m_foreground; }
     Hyperlink hyperlink() const { return m_hyperlink; }
+    Optional<Mask> mask() const { return m_mask; }
+
+    void unset_mask() const { m_mask = {}; }
 
     void set(ItalicTag const&) { m_italic = true; }
     void set(BoldTag const&) { m_bold = true; }
@@ -149,11 +174,12 @@ public:
     void set(Foreground const& fg) { m_foreground = fg; }
     void set(Hyperlink const& link) { m_hyperlink = link; }
     void set(AnchoredTag const&) { m_is_anchored = true; }
+    void set(Mask const& mask) { m_mask = mask; }
 
     bool is_anchored() const { return m_is_anchored; }
     bool is_empty() const { return m_is_empty; }
 
-    String to_string() const;
+    ByteString to_byte_string() const;
 
 private:
     bool m_underline { false };
@@ -162,6 +188,7 @@ private:
     Background m_background { XtermColor::Unchanged };
     Foreground m_foreground { XtermColor::Unchanged };
     Hyperlink m_hyperlink;
+    mutable Optional<Mask> m_mask;
 
     bool m_is_anchored { false };
 

@@ -12,8 +12,13 @@
 #include <LibGUI/HeaderView.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/TableView.h>
-#include <LibGfx/FontDatabase.h>
+#include <LibGUI/Widget.h>
+#include <LibGfx/Font/FontDatabase.h>
 #include <LibGfx/Palette.h>
+
+REGISTER_WIDGET(SystemMonitor, ProcessStateWidget)
+
+namespace SystemMonitor {
 
 class ProcessStateModel final
     : public GUI::Model
@@ -43,9 +48,9 @@ public:
                     // NOTE: The icon column is nameless in ProcessModel, but we want it to have a name here.
                     return "Icon";
                 }
-                return m_target.column_name(index.row());
+                return m_target.column_name(index.row()).release_value_but_fixme_should_propagate_errors();
             }
-            return m_target_index.sibling_at_column(index.row()).data();
+            return m_target_index.sibling_at_column(index.row()).data(ProcessModel::DISPLAY_VERBOSE);
         }
 
         if (role == GUI::ModelRole::Font) {
@@ -75,18 +80,34 @@ public:
         did_update(GUI::Model::UpdateFlag::DontInvalidateIndices);
     }
 
+    void set_pid(pid_t pid)
+    {
+        m_pid = pid;
+        refresh();
+    }
+    pid_t pid() const { return m_pid; }
+
 private:
     ProcessModel& m_target;
     GUI::ModelIndex m_target_index;
     pid_t m_pid { -1 };
 };
 
-ProcessStateWidget::ProcessStateWidget(pid_t pid)
+ErrorOr<NonnullRefPtr<ProcessStateWidget>> ProcessStateWidget::try_create()
 {
-    set_layout<GUI::VerticalBoxLayout>();
-    layout()->set_margins(4);
-    m_table_view = add<GUI::TableView>();
-    m_table_view->set_model(adopt_ref(*new ProcessStateModel(ProcessModel::the(), pid)));
-    m_table_view->column_header().set_visible(false);
-    m_table_view->column_header().set_section_size(0, 90);
+    auto widget = TRY(adopt_nonnull_ref_or_enomem(new (nothrow) ProcessStateWidget()));
+    widget->set_layout<GUI::VerticalBoxLayout>(4);
+    widget->m_table_view = widget->add<GUI::TableView>();
+    widget->m_table_view->set_model(TRY(try_make_ref_counted<ProcessStateModel>(ProcessModel::the(), 0)));
+    widget->m_table_view->column_header().set_visible(false);
+    widget->m_table_view->column_header().set_section_size(0, 90);
+    return widget;
+}
+
+void ProcessStateWidget::set_pid(pid_t pid)
+{
+    static_cast<ProcessStateModel*>(m_table_view->model())->set_pid(pid);
+    update();
+}
+
 }

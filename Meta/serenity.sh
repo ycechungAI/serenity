@@ -7,8 +7,8 @@ print_help() {
     NAME=$(basename "$ARG0")
     cat <<EOF
 Usage: $NAME COMMAND [TARGET] [TOOLCHAIN] [ARGS...]
-  Supported TARGETs: aarch64, i686, x86_64, lagom. Defaults to SERENITY_ARCH, or i686 if not set.
-  Supported TOOLCHAINs: GNU, Clang. Defaults to GNU if not set.
+  Supported TARGETs: aarch64, x86_64, riscv64, lagom. Defaults to SERENITY_ARCH, or x86_64 if not set.
+  Supported TOOLCHAINs: GNU, Clang. Defaults to SERENITY_TOOLCHAIN, or GNU if not set.
   Supported COMMANDs:
     build:      Compiles the target binaries, [ARGS...] are passed through to ninja
     install:    Installs the target binary
@@ -46,27 +46,22 @@ Usage: $NAME COMMAND [TARGET] [TOOLCHAIN] [ARGS...]
 
 
   Examples:
-    $NAME run i686 smp=on
+    $NAME run x86_64 GNU smp=on
         Runs the image in QEMU passing "smp=on" to the kernel command line
     $NAME run
-        Runs the image for the default TARGET i686 in QEMU
+        Runs the image for the default TARGET x86_64 in QEMU
     $NAME run lagom js -A
         Runs the Lagom-built js(1) REPL
     $NAME test lagom
         Runs the unit tests on the build host
-    $NAME kaddr2line i686 0x12345678
+    $NAME kaddr2line x86_64 GNU 0x12345678
         Resolves the address 0x12345678 in the Kernel binary
-    $NAME addr2line i686 WindowServer 0x12345678
+    $NAME addr2line x86_64 WindowServer 0x12345678
         Resolves the address 0x12345678 in the WindowServer binary
-    $NAME gdb i686 smp=on -ex 'hb *init'
-        Runs the image for the TARGET i686 in qemu and attaches a gdb session
+    $NAME gdb x86_64 GNU smp=on -ex 'hb *init'
+        Runs the image for the TARGET x86_64 in qemu and attaches a gdb session
         setting a breakpoint at the init() function in the Kernel.
 EOF
-}
-
-die() {
-    >&2 echo "die: $*"
-    exit 1
 }
 
 usage() {
@@ -82,30 +77,35 @@ if [ "$CMD" = "help" ]; then
     exit 0
 fi
 
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# shellcheck source=/dev/null
+. "${DIR}/shell_include.sh"
+
+exit_if_running_as_root "Do not run serenity.sh as root, your Build directory will become root-owned"
+
+# shellcheck source=/dev/null
+. "${DIR}/find_compiler.sh"
+
 if [ -n "$1" ]; then
     TARGET="$1"; shift
 else
-    TARGET="${SERENITY_ARCH:-"i686"}"
+    TARGET="${SERENITY_ARCH:-"x86_64"}"
 fi
 
 CMAKE_ARGS=()
 
 # Toolchain selection only applies to non-lagom targets.
-if [ "$TARGET" != "lagom" ]; then
-    case "$1" in
-        GNU|Clang)
-            TOOLCHAIN_TYPE="$1"; shift
-            ;;
-        *)
-            if [ -n "$1" ]; then
-                echo "WARNING: unknown toolchain '$1'. Defaulting to GNU."
-                echo "         Valid values are 'Clang', 'GNU' (default)"
-            fi
-            TOOLCHAIN_TYPE="GNU"
-            ;;
-    esac
-    CMAKE_ARGS+=( "-DSERENITY_TOOLCHAIN=$TOOLCHAIN_TYPE" )
+if [ "$TARGET" != "lagom" ] && [ -n "$1" ]; then
+    TOOLCHAIN_TYPE="$1"; shift
+else
+    TOOLCHAIN_TYPE="${SERENITY_TOOLCHAIN:-"GNU"}"
 fi
+if ! [[ "${TOOLCHAIN_TYPE}" =~ ^(GNU|Clang)$ ]]; then
+    >&2 echo "ERROR: unknown toolchain '${TOOLCHAIN_TYPE}'."
+    exit 1
+fi
+CMAKE_ARGS+=( "-DSERENITY_TOOLCHAIN=$TOOLCHAIN_TYPE" )
 
 CMD_ARGS=( "$@" )
 
@@ -118,16 +118,19 @@ is_valid_target() {
         CMAKE_ARGS+=("-DSERENITY_ARCH=aarch64")
         return 0
     fi
-    if [ "$TARGET" = "i686" ]; then
-        CMAKE_ARGS+=("-DSERENITY_ARCH=i686")
-        return 0
-    fi
     if [ "$TARGET" = "x86_64" ]; then
         CMAKE_ARGS+=("-DSERENITY_ARCH=x86_64")
         return 0
     fi
+    if [ "$TARGET" = "riscv64" ]; then
+        CMAKE_ARGS+=("-DSERENITY_ARCH=riscv64")
+        return 0
+    fi
     if [ "$TARGET" = "lagom" ]; then
         CMAKE_ARGS+=("-DBUILD_LAGOM=ON")
+        if [ "${CMD_ARGS[0]}" = "ladybird" ]; then
+            CMAKE_ARGS+=("-DENABLE_LAGOM_LADYBIRD=ON")
+        fi
         return 0
     fi
     return 1
@@ -141,37 +144,12 @@ create_build_dir() {
     fi
 }
 
-pick_gcc() {
-    local BEST_VERSION=0
-    local BEST_GCC_CANDIDATE=""
-    for GCC_CANDIDATE in egcc gcc gcc-11 gcc-12 /usr/local/bin/gcc-11 /opt/homebrew/bin/gcc-11; do
-        if ! command -v $GCC_CANDIDATE >/dev/null 2>&1; then
-            continue
-        fi
-        if $GCC_CANDIDATE --version 2>&1 | grep "Apple clang" >/dev/null; then
-            continue
-        fi
-        if ! $GCC_CANDIDATE -dumpversion >/dev/null 2>&1; then
-            continue
-        fi
-        local VERSION=""
-        VERSION="$($GCC_CANDIDATE -dumpversion)"
-        local MAJOR_VERSION="${VERSION%%.*}"
-        if [ "$MAJOR_VERSION" -gt "$BEST_VERSION" ]; then
-            BEST_VERSION=$MAJOR_VERSION
-            BEST_GCC_CANDIDATE="$GCC_CANDIDATE"
-        fi
-    done
-    CMAKE_ARGS+=("-DCMAKE_C_COMPILER=$BEST_GCC_CANDIDATE")
-    CMAKE_ARGS+=("-DCMAKE_CXX_COMPILER=${BEST_GCC_CANDIDATE/gcc/g++}")
-    if [ "$BEST_VERSION" -lt 11 ]; then
-        die "Please make sure that GCC version 11 or higher is installed."
-    fi
-}
-
 cmd_with_target() {
     is_valid_target || ( >&2 echo "Unknown target: $TARGET"; usage )
-    pick_gcc
+
+    pick_host_compiler
+    CMAKE_ARGS+=("-DCMAKE_C_COMPILER=${CC}")
+    CMAKE_ARGS+=("-DCMAKE_CXX_COMPILER=${CXX}")
 
     if [ ! -d "$SERENITY_SOURCE_DIR" ]; then
         SERENITY_SOURCE_DIR="$(get_top_dir)"
@@ -195,7 +173,9 @@ cmd_with_target() {
     else
         SUPER_BUILD_DIR="$BUILD_DIR"
         CMAKE_ARGS+=("-DCMAKE_INSTALL_PREFIX=$SERENITY_SOURCE_DIR/Build/lagom-install")
+        CMAKE_ARGS+=("-DSERENITY_CACHE_DIR=${SERENITY_SOURCE_DIR}/Build/caches")
     fi
+    export PATH="$SERENITY_SOURCE_DIR/Toolchain/Local/cmake/bin":$PATH
 }
 
 ensure_target() {
@@ -204,23 +184,29 @@ ensure_target() {
 
 run_tests() {
     local TEST_NAME="$1"
-    export CTEST_OUTPUT_ON_FAILURE=1
+    local CTEST_ARGS=("--output-on-failure" "--test-dir" "$BUILD_DIR")
     if [ -n "$TEST_NAME" ]; then
-        ( cd "$BUILD_DIR" && ctest -R "$TEST_NAME" )
-    else
-        ( cd "$BUILD_DIR" && ctest )
+        if [ "$TEST_NAME" = "WPT" ]; then
+            CTEST_ARGS+=("-C" "Integration")
+        fi
+        CTEST_ARGS+=("-R" "$TEST_NAME")
     fi
+    ctest "${CTEST_ARGS[@]}"
 }
 
 build_target() {
     if [ "$TARGET" = "lagom" ]; then
         # Ensure that all lagom binaries get built, in case user first
         # invoked superbuild for serenity target that doesn't set -DBUILD_LAGOM=ON
-        cmake -S "$SERENITY_SOURCE_DIR/Meta/Lagom" -B "$BUILD_DIR" -DBUILD_LAGOM=ON
+        local EXTRA_CMAKE_ARGS=()
+        if [ "${CMD_ARGS[0]}" = "ladybird" ]; then
+            EXTRA_CMAKE_ARGS=("-DENABLE_LAGOM_LADYBIRD=ON")
+        fi
+        cmake -S "$SERENITY_SOURCE_DIR/Meta/Lagom" -B "$BUILD_DIR" -DBUILD_LAGOM=ON "${EXTRA_CMAKE_ARGS[@]}"
     fi
 
-    # Get either the environement MAKEJOBS or all processors via CMake
-    [ -z "$MAKEJOBS" ] && MAKEJOBS=$(cmake -P "$SERENITY_SOURCE_DIR/Meta/CMake/processor-count.cmake" 2>&1)
+    # Get either the environment MAKEJOBS or all processors via CMake
+    [ -z "$MAKEJOBS" ] && MAKEJOBS=$(cmake -P "$SERENITY_SOURCE_DIR/Meta/CMake/processor-count.cmake")
 
     # With zero args, we are doing a standard "build"
     # With multiple args, we are doing an install/image/run
@@ -235,7 +221,7 @@ build_image() {
     if [ "$SERENITY_RUN" = "limine" ]; then
         build_target limine-image
     else
-        build_target image
+        build_target qemu-image
     fi
 }
 
@@ -244,23 +230,36 @@ delete_target() {
     [ ! -d "$SUPER_BUILD_DIR" ] || rm -rf "$SUPER_BUILD_DIR"
 }
 
+build_cmake() {
+    echo "CMake version too old: build_cmake"
+    ( cd "$SERENITY_SOURCE_DIR/Toolchain" && ./BuildCMake.sh )
+}
+
 build_toolchain() {
     echo "build_toolchain: $TOOLCHAIN_DIR"
+
     if [ "$TOOLCHAIN_TYPE" = "Clang" ]; then
         ( cd "$SERENITY_SOURCE_DIR/Toolchain" && ./BuildClang.sh )
     else
-        ( cd "$SERENITY_SOURCE_DIR/Toolchain" && ARCH="$TARGET" ./BuildIt.sh )
+        (
+            # HACK: ISL's configure fails with "Link Time Optimisation is not supported" if CC is
+            #       Homebrew Clang due to incompatibility with Xcode's ranlib.
+            [ "$(uname -s)" = "Darwin" ] && unset CC CXX
+            cd "$SERENITY_SOURCE_DIR/Toolchain" && ARCH="$TARGET" ./BuildGNU.sh
+        )
     fi
 }
 
 ensure_toolchain() {
+    if [ "$(cmake -P "$SERENITY_SOURCE_DIR"/Meta/CMake/cmake-version.cmake)" -ne 1 ]; then
+        build_cmake
+    fi
     [ -d "$TOOLCHAIN_DIR" ] || build_toolchain
 
-    # FIXME: Remove this check when most people have already updated their toolchain
     if [ "$TOOLCHAIN_TYPE" = "GNU" ]; then
         local ld_version
         ld_version="$("$TOOLCHAIN_DIR"/bin/"$TARGET"-pc-serenity-ld -v)"
-        local expected_version="GNU ld (GNU Binutils) 2.38"
+        local expected_version="GNU ld (GNU Binutils) 2.41"
         if [ "$ld_version" != "$expected_version" ]; then
             echo "Your toolchain has an old version of binutils installed."
             echo "    installed version: \"$ld_version\""
@@ -272,14 +271,24 @@ ensure_toolchain() {
 
 }
 
+confirm_rebuild_if_toolchain_exists() {
+    [ ! -d "$TOOLCHAIN_DIR" ] && return
+
+    read -rp "You already have a toolchain, are you sure you want to delete and rebuild one [y/N]? " input
+
+    if [[ "$input" != "y" && "$input" != "Y" ]]; then
+        die "Aborted rebuild"
+    fi
+}
+
 delete_toolchain() {
     [ ! -d "$TOOLCHAIN_DIR" ] || rm -rf "$TOOLCHAIN_DIR"
 }
 
 kill_tmux_session() {
-    local TMUX_SESSION
-    TMUX_SESSION="$(tmux display-message -p '#S')"
-    [ -z "$TMUX_SESSION" ] || tmux kill-session -t "$TMUX_SESSION"
+    if [ -n "$TMUX_SESSION" ]; then
+        tmux has-session -t "$TMUX_SESSION" >/dev/null 2>&1 && tmux kill-session -t "$TMUX_SESSION"
+    fi
 }
 
 set_tmux_title() {
@@ -309,6 +318,10 @@ run_gdb() {
                     die "Lagom executable can't be specified more than once"
                 fi
                 LAGOM_EXECUTABLE="$arg"
+                if [ "$LAGOM_EXECUTABLE" = "ladybird" ]; then
+                    # FIXME: Make ladybird less cwd-dependent while in the build directory
+                    cd "$BUILD_DIR/Ladybird"
+                fi
             else
                 if [ "$KERNEL_CMD_LINE" != "" ]; then
                     die "Kernel command line can't be specified more than once"
@@ -321,7 +334,7 @@ run_gdb() {
         GDB_ARGS+=( "$PASS_ARG_TO_GDB" )
     fi
     if [ "$TARGET" = "lagom" ]; then
-        gdb "$BUILD_DIR/$LAGOM_EXECUTABLE" "${GDB_ARGS[@]}"
+        gdb "$BUILD_DIR/bin/$LAGOM_EXECUTABLE" "${GDB_ARGS[@]}"
     else
         if [ -n "$KERNEL_CMD_LINE" ]; then
             export SERENITY_KERNEL_CMDLINE="$KERNEL_CMD_LINE"
@@ -331,6 +344,24 @@ run_gdb() {
     fi
 }
 
+build_and_run_lagom_target() {
+    local run_target="${1}"
+    local lagom_target="${CMD_ARGS[0]}"
+    local lagom_args
+
+    # All command arguments must have any existing semicolon escaped, to prevent CMake from
+    # interpreting them as list separators.
+    local cmd_args=()
+    for arg in "${CMD_ARGS[@]:1}"; do
+        cmd_args+=( "${arg//;/\\;}" )
+    done
+
+    # Then existing list separators must be replaced with a semicolon for CMake.
+    lagom_args=$(IFS=';' ; echo -e "${cmd_args[*]}")
+
+    LAGOM_TARGET="${lagom_target}" LAGOM_ARGS="${lagom_args[*]}" build_target "${run_target}"
+}
+
 if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kaddr2line|addr2line|setup-and-run)$ ]]; then
     cmd_with_target
     [[ "$CMD" != "recreate" && "$CMD" != "rebuild" ]] || delete_target
@@ -338,7 +369,7 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
     ensure_target
     case "$CMD" in
         build)
-            build_target "$@"
+            build_target "${CMD_ARGS[@]}"
             ;;
         install)
             build_target
@@ -359,8 +390,11 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
           ;;
         run)
             if [ "$TARGET" = "lagom" ]; then
-                build_target "${CMD_ARGS[0]}"
-                "$BUILD_DIR/${CMD_ARGS[0]}" "${CMD_ARGS[@]:1}"
+                if [ "${CMD_ARGS[0]}" = "ladybird" ]; then
+                    build_and_run_lagom_target "run-ladybird"
+                else
+                    build_and_run_lagom_target "run-lagom-target"
+                fi
             else
                 build_target
                 build_target install
@@ -372,16 +406,18 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
             fi
             ;;
         gdb)
-            command -v tmux >/dev/null 2>&1 || die "Please install tmux!"
             if [ "$TARGET" = "lagom" ]; then
                 [ $# -ge 1 ] || usage
-                build_target "$@"
+                build_target "${CMD_ARGS[@]}"
                 run_gdb "${CMD_ARGS[@]}"
             else
+                command -v tmux >/dev/null 2>&1 || die "Please install tmux!"
                 build_target
                 build_target install
                 build_image
-                tmux new-session "$ARG0" __tmux_cmd "$TARGET" "$TOOLCHAIN_TYPE" run "${CMD_ARGS[@]}" \; set-option -t 0 mouse on \; split-window "$ARG0" __tmux_cmd "$TARGET" "$TOOLCHAIN_TYPE" gdb "${CMD_ARGS[@]}" \;
+
+                TMUX_SESSION="tmux-serenity-gdb-$(date +%s)"
+                tmux new-session -e "TMUX_SESSION=$TMUX_SESSION" -s "$TMUX_SESSION" "$ARG0" __tmux_cmd "$TARGET" "$TOOLCHAIN_TYPE" run "${CMD_ARGS[@]}" \; set-option -t 0 mouse on \; split-window -e "TMUX_SESSION=$TMUX_SESSION" "$ARG0" __tmux_cmd "$TARGET" "$TOOLCHAIN_TYPE" gdb "${CMD_ARGS[@]}" \;
             fi
             ;;
         test)
@@ -393,13 +429,13 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
                 build_image
                 # In contrast to CI, we don't set 'panic=shutdown' here,
                 # in case the user wants to inspect qemu some more.
-                export SERENITY_KERNEL_CMDLINE="fbdev=off system_mode=self-test"
+                export SERENITY_KERNEL_CMDLINE="graphics_subsystem_mode=off system_mode=self-test"
                 export SERENITY_RUN="ci"
                 build_target run
             fi
             ;;
         rebuild)
-            build_target "$@"
+            build_target "${CMD_ARGS[@]}"
             ;;
         recreate)
             ;;
@@ -410,7 +446,7 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
             if [ "$TOOLCHAIN_TYPE" = "Clang" ]; then
                 ADDR2LINE="$TOOLCHAIN_DIR/bin/llvm-addr2line"
             else
-                ADDR2LINE="$TOOLCHAIN_DIR/binutils/binutils/addr2line"
+                ADDR2LINE="$TOOLCHAIN_DIR/bin/$TARGET-pc-serenity-addr2line"
             fi
             "$ADDR2LINE" -e "$BUILD_DIR/Kernel/Kernel" "$@"
             ;;
@@ -425,7 +461,7 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
             elif [ "$TOOLCHAIN_TYPE" = "Clang" ]; then
                 ADDR2LINE="$TOOLCHAIN_DIR/bin/llvm-addr2line"
             else
-                ADDR2LINE="$TOOLCHAIN_DIR/binutils/binutils/addr2line"
+                ADDR2LINE="$TOOLCHAIN_DIR/bin/$TARGET-pc-serenity-addr2line"
             fi
             if [ -x "$BINARY_FILE_PATH" ]; then
                 "$ADDR2LINE" -e "$BINARY_FILE_PATH" "$@"
@@ -434,7 +470,7 @@ if [[ "$CMD" =~ ^(build|install|image|copy-src|run|gdb|test|rebuild|recreate|kad
             fi
             ;;
         *)
-            build_target "$CMD" "$@"
+            build_target "$CMD" "${CMD_ARGS[@]}"
             ;;
     esac
 elif [ "$CMD" = "delete" ]; then
@@ -443,6 +479,7 @@ elif [ "$CMD" = "delete" ]; then
 elif [ "$CMD" = "rebuild-toolchain" ]; then
     cmd_with_target
     lagom_unsupported "The lagom target uses the host toolchain"
+    confirm_rebuild_if_toolchain_exists
     delete_toolchain
     ensure_toolchain
 elif [ "$CMD" = "rebuild-world" ]; then

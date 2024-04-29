@@ -12,13 +12,16 @@ namespace Web::HTML {
 
 // NOTE: This element is marked as obsolete, but is still listed as required by the specification.
 class HTMLMarqueeElement final : public HTMLElement {
-public:
-    using WrapperType = Bindings::HTMLMarqueeElementWrapper;
+    WEB_PLATFORM_OBJECT(HTMLMarqueeElement, HTMLElement);
+    JS_DECLARE_ALLOCATOR(HTMLMarqueeElement);
 
-    HTMLMarqueeElement(DOM::Document&, DOM::QualifiedName);
+public:
     virtual ~HTMLMarqueeElement() override;
 
 private:
+    HTMLMarqueeElement(DOM::Document&, DOM::QualifiedName);
+
+    virtual void initialize(JS::Realm&) override;
     virtual void apply_presentational_hints(CSS::StyleProperties&) const override;
 };
 

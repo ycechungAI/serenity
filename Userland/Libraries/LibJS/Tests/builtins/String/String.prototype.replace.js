@@ -245,4 +245,12 @@ test("UTF-16", () => {
     expect("😀".replace(/\ud83d/u, "")).toBe("😀");
     expect("😀".replace(/\ude00/u, "")).toBe("😀");
     expect("😀".replace(/\ud83d\ude00/u, "")).toBe("");
+
+    expect("".replace("", "😀")).toBe("😀");
+});
+
+test("substitution with capture group", () => {
+    expect("A".replace(/(A)/, "$1")).toBe("A");
+    expect("A".replace(/(A)/, "$10")).toBe("A0");
+    expect("A".replace(/(A)/, "$2")).toBe("$2");
 });
