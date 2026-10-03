@@ -14,6 +14,8 @@ USE_FUSE2FS=0
 if [ "$(id -u)" != 0 ]; then
     if [ -x "$FUSE2FS_PATH" ] && $FUSE2FS_PATH --help 2>&1 |grep fakeroot > /dev/null; then
         USE_FUSE2FS=1
+    elif [ -n "$SERENITY_ROOTLESS_IMAGE" ] || { [ "$(uname -s)" = "Darwin" ] && command -v genext2fs >/dev/null; }; then
+        USE_ROOTLESS=1
     else
         set +e
         ${SUDO} -- "${SHELL}" -c "\"$0\" $* || exit 42"
@@ -69,6 +71,12 @@ nearest_power_of_2() {
 if [ "$SERENITY_ARCH" = "aarch64" ] || [ "$SERENITY_BOOT_DRIVE" = "pci-sd" ]; then
     # SD cards must have a size that is a power of 2. The Aarch64 port loads from an SD card.
     DISK_SIZE_BYTES=$(nearest_power_of_2 "$DISK_SIZE_BYTES")
+fi
+
+if [ "${USE_ROOTLESS:-0}" -eq 1 ]; then
+    echo "building disk image without root (genext2fs)"
+    export DISK_SIZE_BYTES BYTES_PER_INODE
+    exec "$SCRIPT_DIR/build-image-qemu-rootless.sh"
 fi
 
 USE_EXISTING=0
