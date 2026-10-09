@@ -352,8 +352,9 @@ ErrorOr<int> serenity_main(Main::Arguments arguments)
     if (filename.is_empty())
         filename = "/home/anon/Documents/3D Models/teapot.obj"sv;
 
-    TRY(Core::System::pledge("stdio thread recvfd sendfd rpath unix prot_exec map_fixed"));
+    TRY(Core::System::pledge("stdio thread recvfd sendfd rpath wpath unix prot_exec map_fixed"));
 
+    TRY(Core::System::unveil("/dev/gpu", "rw"));
     TRY(Core::System::unveil("/tmp/session/%sid/portal/filesystemaccess", "rw"));
     TRY(Core::System::unveil("/res", "r"));
     TRY(Core::System::unveil("/usr/lib", "r"));
