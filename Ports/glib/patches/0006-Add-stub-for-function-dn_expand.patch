@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kenneth Myhra <kennethmyhra@gmail.com>
+Date: Thu, 12 Aug 2021 20:56:26 +0200
+Subject: [PATCH] Add stub for function dn_expand.
+
+Serenity is missing dn_expand so include a stub for it
+---
+ gio/gthreadedresolver.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/gio/gthreadedresolver.c b/gio/gthreadedresolver.c
+index e22f32697bab884e11b179bed44e3a1ed41b6ce8..36b0e0e6802a0926bc2716af6cc646b6ce78d920 100644
+--- a/gio/gthreadedresolver.c
++++ b/gio/gthreadedresolver.c
+@@ -768,6 +768,12 @@ typedef struct {
+ 
+ /* From bionic/libc/private/resolv_private.h */
+ int dn_expand(const u_char *, const u_char *, const u_char *, char *, int);
++#ifdef __serenity__
++int dn_expand(const u_char *, const u_char *, const u_char *, char *, int)
++{
++  return 0;
++}
++#endif
+ #define dn_skipname __dn_skipname
+ int dn_skipname(const u_char *, const u_char *);
+ 

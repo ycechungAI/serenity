@@ -8,8 +8,11 @@
 
 #include <AK/Array.h>
 #include <AK/Concepts.h>
+#include <AK/FloatingPoint.h>
 #include <AK/Math/Constants.h>
 #include <AK/Math/Exponentials.h>
+#include <AK/Math/Rounding.h>
+#include <AK/Math/Sqrt.h>
 #include <AK/Optional.h>
 
 namespace AK {
@@ -278,9 +281,50 @@ constexpr T lgamma_r(T x, int* sign)
     return lgamma(x);
 }
 
+// If we start to use "tgamma" directly in the codebase, consider using
+// an alias named "gamma" instead. The "tgamma" name only exists for
+// historical reason, and is provided here because it makes things
+// easier in LibC/math.cpp and CompareAKMathAgainstMPFR.
+template<FloatingPoint T>
+constexpr T tgamma(T x)
+{
+    if (isnan(x))
+        return NaN<T>;
+
+    if (x == 0)
+        return copysign(Infinity<T>, x);
+
+    if (x < 0 && (rint(x) == x || isinf(x)))
+        return NaN<T>;
+
+    if (isinf(x))
+        return Infinity<T>;
+
+    using Extractor = FloatExtractor<T>;
+    // These constants were obtained through use of WolframAlpha
+    // FIXME: This assumes that large long double are always f80. Add support for f128.
+    constexpr long long max_integer_whose_factorial_fits = (Extractor::mantissa_bits > FloatExtractor<double>::mantissa_bits ? 20 : (Extractor::mantissa_bits == FloatExtractor<double>::mantissa_bits ? 18 : (Extractor::mantissa_bits == FloatExtractor<float>::mantissa_bits ? 10 : 0)));
+    static_assert(max_integer_whose_factorial_fits != 0, "tgamma needs to be aware of the integer factorial that fits in this floating point type.");
+    if ((int)x == x && x <= max_integer_whose_factorial_fits + 1) {
+        long long result = 1;
+        for (long long cursor = 2; cursor < (long long)x; cursor++)
+            result *= cursor;
+        return static_cast<T>(result);
+    }
+
+    // FIXME: We need to implement something custom to get a correctly rounded
+    //        gamma function.
+    // In the meantime, relying on lgamma provides acceptable results. For double,
+    // on [0, inf] this has a max ULP of 1449. Forwarding to the same-type functions
+    // isn't enough to get a good precision, CORE-MATH uses double-double approximations
+    // for both exp and lgamma to pull that trick for f64 and x > 4.
+    return exp(lgamma(x));
+}
+
 }
 
 using Gamma::lgamma;
 using Gamma::lgamma_r;
+using Gamma::tgamma;
 
 }

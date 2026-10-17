@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Kenneth Myhra <kennethmyhra@gmail.com>
+Date: Mon, 3 Oct 2022 17:19:25 +0200
+Subject: [PATCH] Do not flag support for extended attributes (xattr)
+
+---
+ meson.build | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/meson.build b/meson.build
+index 9245595c923088b147f138c7c76e32183c127168..0c7507815b4fdfc803e5d349c965a9f3bd92dfd6 100644
+--- a/meson.build
++++ b/meson.build
+@@ -2398,7 +2398,7 @@ if host_system == 'linux'
+ endif
+ 
+ xattr_dep = []
+-if host_system != 'windows' and get_option('xattr')
++if host_system != 'windows' and host_system != 'serenity' and get_option('xattr')
+   # either glibc or libattr can provide xattr support
+   # for both of them, we check for getxattr being in
+   # the library and a valid xattr header.
