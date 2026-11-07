@@ -104,7 +104,7 @@ static constexpr FileSystemInitializer s_initializers[] = {
     { "proc"sv, "ProcFS"sv, false, false, false, {}, ProcFS::try_create, validate_mount_boolean_flag_as_invalid, validate_mount_unsigned_integer_flag_as_invalid, validate_mount_signed_integer_flag_as_invalid, validate_mount_ascii_string_flag_as_invalid },
     { "devpts"sv, "DevPtsFS"sv, false, false, false, {}, DevPtsFS::try_create, validate_mount_boolean_flag_as_invalid, validate_mount_unsigned_integer_flag_as_invalid, validate_mount_signed_integer_flag_as_invalid, validate_mount_ascii_string_flag_as_invalid },
     { "sys"sv, "SysFS"sv, false, false, false, {}, SysFS::try_create, validate_mount_boolean_flag_as_invalid, validate_mount_unsigned_integer_flag_as_invalid, validate_mount_signed_integer_flag_as_invalid, validate_mount_ascii_string_flag_as_invalid },
-    { "ram"sv, "RAMFS"sv, false, false, false, {}, RAMFS::try_create, validate_mount_boolean_flag_as_invalid, validate_mount_unsigned_integer_flag_as_invalid, validate_mount_signed_integer_flag_as_invalid, validate_mount_ascii_string_flag_as_invalid },
+    { "ram"sv, "RAMFS"sv, false, false, false, {}, RAMFS::try_create, validate_mount_boolean_flag_as_invalid, RAMFS::validate_mount_unsigned_integer_flag, validate_mount_signed_integer_flag_as_invalid, validate_mount_ascii_string_flag_as_invalid },
     { "ext2"sv, "Ext2FS"sv, true, true, true, Ext2FS::try_create, {}, validate_mount_boolean_flag_as_invalid, validate_mount_unsigned_integer_flag_as_invalid, validate_mount_signed_integer_flag_as_invalid, validate_mount_ascii_string_flag_as_invalid },
     { "9p"sv, "Plan9FS"sv, true, true, true, Plan9FS::try_create, {}, validate_mount_boolean_flag_as_invalid, validate_mount_unsigned_integer_flag_as_invalid, validate_mount_signed_integer_flag_as_invalid, validate_mount_ascii_string_flag_as_invalid },
     { "iso9660"sv, "ISO9660FS"sv, true, true, true, ISO9660FS::try_create, {}, validate_mount_boolean_flag_as_invalid, validate_mount_unsigned_integer_flag_as_invalid, validate_mount_signed_integer_flag_as_invalid, validate_mount_ascii_string_flag_as_invalid },
@@ -539,7 +539,7 @@ ErrorOr<void> VirtualFileSystem::mkdir(VFSRootContext const& vfs_root_context, C
     // FIXME: The errors returned by resolve_path_without_veil can leak information about paths that are not unveiled,
     //        e.g. when the error is EACCESS or similar.
     auto base_custody = TRY(base.resolve());
-    auto result = resolve_path_without_veil(vfs_root_context, credentials, path, base_custody, &parent_custody);
+    auto result = resolve_path_without_veil(vfs_root_context, credentials, path, base_custody, &parent_custody, O_NOFOLLOW_NOERROR);
     if (!result.is_error())
         return EEXIST;
     else if (!parent_custody)
@@ -623,7 +623,7 @@ ErrorOr<void> VirtualFileSystem::rename(VFSRootContext const& vfs_root_context, 
     auto& old_inode = old_custody->inode();
 
     RefPtr<Custody> new_parent_custody;
-    auto new_custody_or_error = resolve_path(vfs_root_context, credentials, new_path, new_base, &new_parent_custody);
+    auto new_custody_or_error = resolve_path(vfs_root_context, credentials, new_path, new_base, &new_parent_custody, O_NOFOLLOW_NOERROR);
     if (new_custody_or_error.is_error()) {
         if (new_custody_or_error.error().code() != ENOENT || !new_parent_custody)
             return new_custody_or_error.release_error();

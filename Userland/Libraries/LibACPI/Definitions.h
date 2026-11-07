@@ -6,10 +6,13 @@
 
 #pragma once
 
+#include <AK/EnumBits.h>
+#include <AK/Format.h>
+#include <AK/StdLibExtras.h>
+#include <AK/Traits.h>
 #include <AK/Types.h>
-#include <Kernel/Memory/PhysicalAddress.h>
 
-namespace Kernel::ACPI {
+namespace ACPI {
 
 namespace FADTFlags {
 
@@ -39,8 +42,10 @@ enum class FeatureFlags : u32 {
     LOW_POWER_S0_IDLE_CAPABLE = 1 << 21
 };
 
+AK_ENUM_BITWISE_OPERATORS(FeatureFlags);
+
 // https://uefi.org/specs/ACPI/6.5/05_ACPI_Software_Programming_Model.html#fixed-acpi-description-table-boot-ia-pc-boot-architecture-flags
-enum class IA_PC_Flags : u8 {
+enum class IA_PC_Flags : u16 {
     Legacy_Devices = 1 << 0,
     PS2_8042 = 1 << 1,
     VGA_Not_Present = 1 << 2,
@@ -48,6 +53,8 @@ enum class IA_PC_Flags : u8 {
     PCIe_ASPM_Controls = 1 << 4,
     CMOS_RTC_Not_Present = 1 << 5
 };
+
+AK_ENUM_BITWISE_OPERATORS(IA_PC_Flags);
 
 struct [[gnu::packed]] HardwareFeatures {
     bool wbinvd : 1;
@@ -82,24 +89,35 @@ struct [[gnu::packed]] x86_Specific_Flags {
 };
 };
 
+// https://uefi.org/specs/ACPI/6.6/05_ACPI_Software_Programming_Model.html#generic-address-structure
 namespace GenericAddressStructure {
-enum class AddressSpace {
-    SystemMemory = 0,
-    SystemIO = 1,
-    PCIConfigurationSpace = 2,
-    EmbeddedController = 3,
-    SMBus = 4,
-    PCC = 0xA,
-    FunctionalFixedHardware = 0x7F
+
+enum class AddressSpace : u8 {
+    SystemMemory = 0x00,
+    SystemIO = 0x01,
+    PCIConfigurationSpace = 0x02,
+    EmbeddedController = 0x03,
+    SMBus = 0x04,
+    SystemCMOS = 0x05,
+    PCIBarTarget = 0x06,
+    IPMI = 0x07,
+    GPIO = 0x08,
+    GenericSerialBus = 0x09,
+    PlatformCommunicationsChannel = 0x0A,
+    PlatformRuntimeMechanism = 0x0B,
+    FunctionalFixedHardware = 0x7F,
+    OEMDefined = 0x80,
 };
-enum class AccessSize {
+
+enum class AccessSize : u8 {
     Undefined = 0,
     Byte = 1,
     Word = 2,
     DWord = 3,
     QWord = 4
 };
-enum class BitWidth {
+
+enum class BitWidth : u8 {
     Undefined = 0,
     Byte = 8,
     Word = 16,
@@ -152,12 +170,18 @@ struct [[gnu::packed]] XSDT {
     u64 table_ptrs[];
 };
 
+// https://uefi.org/specs/ACPI/6.6/05_ACPI_Software_Programming_Model.html#generic-address-structure
 struct [[gnu::packed]] GenericAddressStructure {
-    u8 address_space;
-    u8 bit_width;
+    ::ACPI::GenericAddressStructure::AddressSpace address_space;
+    ::ACPI::GenericAddressStructure::BitWidth bit_width;
     u8 bit_offset;
-    u8 access_size;
+    ::ACPI::GenericAddressStructure::AccessSize access_size;
     u64 address;
+
+    [[nodiscard]] bool is_null() const
+    {
+        return to_underlying(address_space) == 0 && to_underlying(bit_width) == 0 && bit_offset == 0 && to_underlying(access_size) == 0 && address == 0;
+    }
 };
 
 struct [[gnu::packed]] HPET {
@@ -209,9 +233,9 @@ struct [[gnu::packed]] FADT {
     u8 day_alrm;
     u8 mon_alrm;
     u8 century;
-    u16 ia_pc_boot_arch_flags;
+    FADTFlags::IA_PC_Flags ia_pc_boot_arch_flags;
     u8 reserved2;
-    u32 flags;
+    FADTFlags::FeatureFlags flags;
     GenericAddressStructure reset_reg;
     u8 reset_value;
     u16 arm_boot_arch;
@@ -232,7 +256,7 @@ struct [[gnu::packed]] FADT {
 };
 
 // https://uefi.org/specs/ACPI/6.5/05_ACPI_Software_Programming_Model.html#interrupt-controller-structure-types
-enum class MADTEntryType {
+enum class MADTEntryType : u8 {
     LocalAPIC = 0x0,
     IOAPIC = 0x1,
     InterruptSourceOverride = 0x2,
@@ -252,7 +276,7 @@ enum class MADTEntryType {
 };
 
 struct [[gnu::packed]] MADTEntryHeader {
-    u8 type;
+    MADTEntryType type;
     u8 length;
 };
 
@@ -325,6 +349,180 @@ struct [[gnu::packed]] DSDT {
     SDTHeader h;
     unsigned char definition_block[];
 };
+
+// https://uefi.org/specs/ACPI/6.6/04_ACPI_Hardware_Specification.html#pm1-control-registers-fixed-hardware-feature-control-bits
+struct [[gnu::packed]] PM1ControlRegister {
+    bool SCI_EN : 1;
+    bool BM_RLD : 1;
+    bool GBL_RS : 1;
+    u16 : 7;
+    u16 SLP_TYPx : 3;
+    bool SLP_EN : 1;
+    u16 : 2;
+};
+static_assert(AssertSize<PM1ControlRegister, 2>());
+
+// https://uefi.org/specs/ACPI/6.6/04_ACPI_Hardware_Specification.html#sleep-control-register
+struct [[gnu::packed]] SleepControlRegister {
+    u8 : 2;
+    u8 SLP_TYPx : 3;
+    bool SLP_EN : 1;
+    u8 : 1;
+};
+static_assert(AssertSize<SleepControlRegister, 1>());
+
+}
+
+namespace AML {
+
+// https://uefi.org/specs/ACPI/6.6/20_AML_Specification.html#aml-byte-stream-byte-values
+constexpr u8 EXT_OP_PREFIX = 0x5B;
+constexpr u8 DUAL_NAME_PREFIX = 0x2E;
+constexpr u8 MULTI_NAME_PREFIX = 0x2F;
+
+// https://uefi.org/specs/ACPI/6.6/20_AML_Specification.html#aml-byte-stream-byte-values
+enum class Opcode : u16 {
+    ZeroOp = 0x0000,
+    OneOp = 0x0001,
+    OnesOp = 0x00FF,
+
+    BytePrefix = 0x000A,
+    WordPrefix = 0x000B,
+    DWordPrefix = 0x000C,
+    QWordPrefix = 0x000E,
+    StringPrefix = 0x000D,
+
+    RevisionOp = 0x5B30,
+    DebugOp = 0x5B31,
+
+    AliasOp = 0x0006,
+    NameOp = 0x0008,
+    ScopeOp = 0x0010,
+    BufferOp = 0x0011,
+    PackageOp = 0x0012,
+    VarPackageOp = 0x0013,
+    MethodOp = 0x0014,
+    ExternalOp = 0x0015,
+    MutexOp = 0x5B01,
+    EventOp = 0x5B02,
+    TimerOp = 0x5B33,
+    OpRegionOp = 0x5B80,
+    FieldOp = 0x5B81,
+    DeviceOp = 0x5B82,
+    // NOTE: This opcode is missing in the latest spec but is still being used.
+    ProcessorOp = 0x5B83,
+    PowerResOp = 0x5B84,
+    ThermalZoneOp = 0x5B85,
+    IndexFieldOp = 0x5B86,
+    BankFieldOp = 0x5B87,
+    DataRegionOp = 0x5B88,
+
+    CondRefOfOp = 0x5B12,
+    CreateFieldOp = 0x5B13,
+    LoadTableOp = 0x5B1F,
+    LoadOp = 0x5B20,
+    StallOp = 0x5B21,
+    SleepOp = 0x5B22,
+    AcquireOp = 0x5B23,
+    SignalOp = 0x5B24,
+    WaitOp = 0x5B25,
+    ResetOp = 0x5B26,
+    ReleaseOp = 0x5B27,
+    FromBCDOp = 0x5B28,
+    ToBCDOp = 0x5B29,
+    FatalOp = 0x5B32,
+    StoreOp = 0x70,
+    RefOfOp = 0x71,
+
+    AddOp = 0x72,
+    ConcatOp = 0x73,
+    SubtractOp = 0x74,
+    IncrementOp = 0x75,
+    DecrementOp = 0x76,
+    MultiplyOp = 0x77,
+    DivideOp = 0x78,
+    ShiftLeftOp = 0x79,
+    ShiftRightOp = 0x7A,
+    AndOp = 0x7B,
+    NandOp = 0x7C,
+    OrOp = 0x7D,
+    NorOp = 0x7E,
+    XorOp = 0x7F,
+
+    NotOp = 0x80,
+    FindSetLeftBitOp = 0x81,
+    FindSetRightBitOp = 0x82,
+
+    DerefOfOp = 0x83,
+    ConcatResOp = 0x84,
+    ModOp = 0x85,
+    NotifyOp = 0x86,
+    SizeOfOp = 0x87,
+    IndexOp = 0x88,
+    MatchOp = 0x89,
+    ObjectTypeOp = 0x8E,
+
+    LAndOp = 0x90,
+    LOrOp = 0x91,
+    LNotOp = 0x92,
+    LEqualOp = 0x93,
+    LGreaterOp = 0x94,
+    LLessOp = 0x95,
+
+    ToBufferOp = 0x96,
+    ToDecimalStringOp = 0x97,
+    ToHexStringOp = 0x98,
+    ToIntegerOp = 0x99,
+    ToStringOp = 0x9C,
+
+    CreateBitFieldOp = 0x8D,
+    CreateByteFieldOp = 0x8C,
+    CreateWordFieldOp = 0x8B,
+    CreateDWordFieldOp = 0x8A,
+    CreateQWordFieldOp = 0x8F,
+
+    CopyObjectOp = 0x9D,
+    MidOp = 0x9E,
+    ContinueOp = 0x9F,
+    IfOp = 0xA0,
+    ElseOp = 0xA1,
+    WhileOp = 0xA2,
+    NoopOp = 0xA3,
+    ReturnOp = 0xA4,
+    BreakOp = 0xA5,
+    BreakPointOp = 0xCC,
+
+    Local0Op = 0x60,
+    Local1Op = 0x61,
+    Local2Op = 0x62,
+    Local3Op = 0x63,
+    Local4Op = 0x64,
+    Local5Op = 0x65,
+    Local6Op = 0x66,
+    Local7Op = 0x67,
+    Arg0Op = 0x68,
+    Arg1Op = 0x69,
+    Arg2Op = 0x6A,
+    Arg3Op = 0x6B,
+    Arg4Op = 0x6C,
+    Arg5Op = 0x6D,
+    Arg6Op = 0x6E,
+};
+
 }
 
 }
+
+template<>
+class AK::Traits<::ACPI::Structures::SDTHeader> : public DefaultTraits<::ACPI::Structures::SDTHeader> {
+public:
+    static constexpr bool is_trivially_serializable() { return true; }
+};
+
+template<>
+struct AK::Formatter<::ACPI::AML::Opcode> : AK::Formatter<FormatString> {
+    ErrorOr<void> format(FormatBuilder& builder, ::ACPI::AML::Opcode opcode)
+    {
+        return AK::Formatter<FormatString>::format(builder, "{:04X}"sv, static_cast<u16>(opcode));
+    }
+};

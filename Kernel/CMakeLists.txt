@@ -238,9 +238,11 @@ set(KERNEL_SOURCES
     FileSystem/SysFS/Subsystems/Kernel/Configuration/UBSANDeadly.cpp
     FileSystem/VFSRootContext.cpp
     FileSystem/VirtualFileSystem.cpp
+    Firmware/ACPI/GenericAddress.cpp
     Firmware/ACPI/Initialize.cpp
     Firmware/ACPI/Parser.cpp
-    Firmware/ACPI/StaticParsing.cpp
+    Firmware/ACPI/SysFSComponent.cpp
+    Firmware/ACPI/SysFSDirectory.cpp
     Firmware/DeviceTree/Device.cpp
     Firmware/DeviceTree/DeviceTree.cpp
     Firmware/DeviceTree/Management.cpp
@@ -637,6 +639,17 @@ set(AK_SOURCES
     ../AK/UUID.cpp
 )
 
+set(ACPI_SOURCES
+    ../Userland/Libraries/LibACPI/Interpreter.cpp
+    ../Userland/Libraries/LibACPI/NameString.cpp
+    ../Userland/Libraries/LibACPI/Node.cpp
+    ../Userland/Libraries/LibACPI/Object.cpp
+    ../Userland/Libraries/LibACPI/OpcodeFilters.cpp
+    ../Userland/Libraries/LibACPI/OpcodeFrame.cpp
+    ../Userland/Libraries/LibACPI/Table.cpp
+    ../Userland/Libraries/LibACPI/TableStream.cpp
+)
+
 set(DT_SOURCES
     ../Userland/Libraries/LibDeviceTree/DeviceTree.cpp
     ../Userland/Libraries/LibDeviceTree/FlattenedDeviceTree.cpp
@@ -840,6 +853,7 @@ set(SOURCES
     ${KERNEL_SOURCES}
     ${GENERATED_SOURCES}
     ${AK_SOURCES}
+    ${ACPI_SOURCES}
     ${DT_SOURCES}
     ${EDID_SOURCES}
     ${ELF_SOURCES}

@@ -109,3 +109,111 @@ TEST_CASE(0006_gl_stencil_clear_value)
     glGetIntegerv(GL_STENCIL_CLEAR_VALUE, &clear_stencil);
     EXPECT_EQ(clear_stencil, 255);
 }
+
+TEST_CASE(0008_default_texture_size)
+{
+    auto context = create_testing_context();
+
+    GLint width = -1;
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+    EXPECT_EQ(glGetError(), 0u);
+    EXPECT_EQ(width, 0);
+
+    GLint height = -1;
+    glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &height);
+    EXPECT_EQ(glGetError(), 0u);
+    EXPECT_EQ(height, 0);
+}
+
+TEST_CASE(0007_proxy_texture_2d)
+{
+    auto context = create_testing_context();
+
+    GLint max_texture_size = -1;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
+    EXPECT_EQ(glGetError(), 0u);
+    EXPECT_NE(max_texture_size, -1);
+
+    GLint wanted_size = 4;
+
+    VERIFY(wanted_size <= max_texture_size);
+
+    glTexImage2D(GL_PROXY_TEXTURE_2D, 0, GL_RGBA, wanted_size, wanted_size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    EXPECT_EQ(glGetError(), 0u);
+
+    GLint width = -1;
+    glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+    EXPECT_EQ(glGetError(), 0u);
+    EXPECT_EQ(width, wanted_size);
+
+    GLint height = -1;
+    glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+    EXPECT_EQ(glGetError(), 0u);
+    EXPECT_EQ(height, wanted_size);
+
+    glActiveTexture(GL_TEXTURE1);
+
+    height = -1;
+    glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+    EXPECT_EQ(glGetError(), 0u);
+    EXPECT_EQ(height, wanted_size);
+
+    // This part of the test only works if there are invalid texture sizes that can be represented by an int.
+    VERIFY(max_texture_size < NumericLimits<GLint>::max());
+
+    wanted_size = NumericLimits<GLint>::max();
+
+    glTexImage2D(GL_PROXY_TEXTURE_2D, 0, GL_RGBA, wanted_size, wanted_size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    EXPECT_EQ(glGetError(), 0u);
+
+    width = -1;
+    glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+    EXPECT_EQ(glGetError(), 0u);
+    EXPECT_EQ(width, 0);
+
+    height = -1;
+    glGetTexLevelParameteriv(GL_PROXY_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+    EXPECT_EQ(glGetError(), 0u);
+    EXPECT_EQ(height, 0);
+}
+
+TEST_CASE(0008_unpack_pack_skip_pixels_rows)
+{
+    auto context = create_testing_context();
+
+    GLuint texture;
+    glGenTextures(1, &texture);
+    EXPECT_EQ(glGetError(), 0u);
+
+    glBindTexture(GL_TEXTURE_2D, texture);
+    EXPECT_EQ(glGetError(), 0u);
+
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 1);
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, 1);
+
+    // clang-format off
+    u32 input_texture_data[] = {
+                    0xdeadbeef,
+        0xdeadbeef, 0xdeadbeef,
+
+        0x01010101, 0x02020202,
+        0x03030303, 0x04040404,
+    };
+    // clang-format on
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, &input_texture_data);
+    EXPECT_EQ(glGetError(), 0u);
+
+    glPixelStorei(GL_PACK_SKIP_PIXELS, 1);
+    glPixelStorei(GL_PACK_SKIP_ROWS, 2);
+
+    u32 output_texture_data[1 + 2 * 2 + 2 * 2] = {};
+
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, &output_texture_data);
+    EXPECT_EQ(glGetError(), 0u);
+
+    EXPECT_EQ(output_texture_data[1 + 2 * 2], 0x01010101u);
+    EXPECT_EQ(output_texture_data[1 + 2 * 2 + 1], 0x02020202u);
+    EXPECT_EQ(output_texture_data[1 + 2 * 2 + 2], 0x03030303u);
+    EXPECT_EQ(output_texture_data[1 + 2 * 2 + 3], 0x04040404u);
+}

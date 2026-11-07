@@ -40,29 +40,39 @@ extern "C" {
 
 namespace Core {
 
-struct ArgvList {
-    ByteString m_path;
-    Vector<char const*, 10> m_argv;
+namespace {
 
-    ArgvList(ByteString path, size_t size)
-        : m_path { path }
+class NullTerminatedStringArray {
+public:
+    explicit NullTerminatedStringArray(size_t size)
     {
-        m_argv.ensure_capacity(size + 2);
-        m_argv.append(m_path.characters());
+        m_list.ensure_capacity(size + 1);
+    }
+
+    static NullTerminatedStringArray create_for_argv(ByteString const& path, size_t size)
+    {
+        NullTerminatedStringArray argv(size + 1);
+        argv.append(path.characters());
+        return argv;
     }
 
     void append(char const* arg)
     {
-        m_argv.append(arg);
+        m_list.append(arg);
     }
 
-    Span<char const*> get()
+    char** get()
     {
-        if (m_argv.is_empty() || m_argv.last() != nullptr)
-            m_argv.append(nullptr);
-        return m_argv;
+        if (m_list.is_empty() || m_list.last() != nullptr)
+            m_list.append(nullptr);
+        return const_cast<char**>(m_list.span().data());
     }
+
+private:
+    Vector<char const*, 10> m_list;
 };
+
+}
 
 ErrorOr<Process> Process::spawn(ProcessSpawnOptions const& options)
 {
@@ -108,15 +118,26 @@ ErrorOr<Process> Process::spawn(ProcessSpawnOptions const& options)
 
 #undef CHECK
 
-    ArgvList argv_list(options.executable, options.arguments.size());
+    auto argv_list = NullTerminatedStringArray::create_for_argv(options.executable, options.arguments.size());
     for (auto const& argument : options.arguments)
         argv_list.append(argument.characters());
 
+    Optional<NullTerminatedStringArray> environment_storage;
+    char** environment = [&] {
+        if (options.environment.has_value()) {
+            environment_storage = NullTerminatedStringArray(options.environment->size());
+            for (auto const& env : *options.environment)
+                environment_storage->append(env.characters());
+            return environment_storage->get();
+        }
+        return Environment::raw_environ();
+    }();
+
     pid_t pid;
     if (options.search_for_executable_in_path) {
-        pid = TRY(System::posix_spawnp(options.executable.view(), &spawn_actions, nullptr, const_cast<char**>(argv_list.get().data()), Core::Environment::raw_environ()));
+        pid = TRY(System::posix_spawnp(options.executable.view(), &spawn_actions, nullptr, argv_list.get(), environment));
     } else {
-        pid = TRY(System::posix_spawn(options.executable.view(), &spawn_actions, nullptr, const_cast<char**>(argv_list.get().data()), Core::Environment::raw_environ()));
+        pid = TRY(System::posix_spawn(options.executable.view(), &spawn_actions, nullptr, argv_list.get(), environment));
     }
     return Process { pid };
 }

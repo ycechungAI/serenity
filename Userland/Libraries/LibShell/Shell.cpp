@@ -1138,10 +1138,6 @@ Vector<NonnullRefPtr<Job>> Shell::run_commands(Vector<AST::Command>& commands)
 
 bool Shell::run_file(ByteString const& filename, bool explicitly_invoked)
 {
-    TemporaryChange script_change { current_script, filename };
-    TemporaryChange interactive_change { m_is_interactive, false };
-    TemporaryChange<Optional<SourcePosition>> source_change { m_source_position, SourcePosition { .source_file = filename, .literal_source_text = {}, .position = {} } };
-
     auto file_or_error = Core::File::open(filename, Core::File::OpenMode::Read);
     if (file_or_error.is_error()) {
         auto error = ByteString::formatted("'{}': {}", escape_token_for_single_quotes(filename), file_or_error.error());
@@ -1161,6 +1157,11 @@ bool Shell::run_file(ByteString const& filename, bool explicitly_invoked)
             dbgln("reading after open() failed for {}", error);
         return false;
     }
+
+    TemporaryChange script_change { current_script, filename };
+    TemporaryChange interactive_change { m_is_interactive, false };
+    TemporaryChange<Optional<SourcePosition>> source_change { m_source_position, SourcePosition { .source_file = filename, .literal_source_text = data_or_error.value(), .position = {} } };
+
     return run_command(data_or_error.value()) == 0;
 }
 
@@ -2487,6 +2488,18 @@ void Shell::kill_job(Job const* job, int sig)
 
 void Shell::possibly_print_error() const
 {
+    if (m_error == ShellError::None || is_control_flow(m_error))
+        return;
+
+    if (m_source_position.has_value() && m_source_position->source_file.has_value()) {
+        warn("{}", m_source_position->source_file.value());
+        if (m_source_position->position.has_value()) {
+            warn(":{}", m_source_position->position->start_line.line_number + 1);
+            warn(":{}", m_source_position->position->start_line.line_column + 1);
+        }
+        warn(": ");
+    }
+
     switch (m_error) {
     case ShellError::EvaluatedSyntaxError:
         warnln("Shell Syntax Error: {}", m_error_description);
@@ -2516,16 +2529,15 @@ void Shell::possibly_print_error() const
     case ShellError::InternalControlFlowReturn:
     case ShellError::InternalControlFlowInterrupted:
     case ShellError::InternalControlFlowKilled:
-        return;
     case ShellError::None:
-        return;
+        VERIFY_NOT_REACHED();
     }
 
     if (m_source_position.has_value() && m_source_position->position.has_value()) {
         auto& source_position = m_source_position.value();
         auto do_line = [&](auto line, auto& current_line) {
             auto is_in_range = line >= (i64)source_position.position->start_line.line_number && line <= (i64)source_position.position->end_line.line_number;
-            warnln("{:>3}| {}", line, current_line);
+            warnln("{:>3}| {}", line + 1, current_line);
             if (is_in_range) {
                 warn("\x1b[31m");
                 size_t length_written_so_far = 0;
@@ -2555,39 +2567,7 @@ void Shell::possibly_print_error() const
         StringView current_line;
         i64 line_to_skip_to = max(source_position.position->start_line.line_number, 2ul) - 2;
 
-        if (source_position.source_file.has_value()) {
-            auto file_or_error = Core::File::open(*source_position.source_file, Core::File::OpenMode::Read);
-            if (file_or_error.is_error()) {
-                warnln("Shell: Internal error while trying to display source information: {} (while reading '{}')", file_or_error.error(), *source_position.source_file);
-                return;
-            }
-            auto file = Core::InputBufferedFile::create(file_or_error.release_value());
-            while (line < line_to_skip_to) {
-                if (file.value()->is_eof())
-                    return;
-                auto current_line_or_error = file.value()->read_line(line_buf);
-                if (current_line_or_error.is_error()) {
-                    warnln("Shell: Internal error while trying to display source information: {} (while reading line {} of '{}')", current_line_or_error.error(), line, source_position.source_file);
-                    return;
-                }
-                current_line = current_line_or_error.release_value();
-                ++line;
-            }
-
-            for (; line < (i64)source_position.position->end_line.line_number + 2; ++line) {
-                do_line(line, current_line);
-                if (file.value()->is_eof()) {
-                    current_line = ""sv;
-                } else {
-                    auto current_line_or_error = file.value()->read_line(line_buf);
-                    if (current_line_or_error.is_error()) {
-                        warnln("Shell: Internal error while trying to display source information: {} (while reading line {} of '{}')", current_line_or_error.error(), line, source_position.source_file);
-                        return;
-                    }
-                    current_line = current_line_or_error.release_value();
-                }
-            }
-        } else if (!source_position.literal_source_text.is_empty()) {
+        if (!source_position.literal_source_text.is_empty()) {
             GenericLexer lexer { source_position.literal_source_text };
             while (line < line_to_skip_to) {
                 if (lexer.is_eof())

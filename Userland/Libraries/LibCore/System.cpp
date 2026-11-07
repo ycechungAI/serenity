@@ -621,6 +621,17 @@ ErrorOr<void> close(int fd)
     return {};
 }
 
+ErrorOr<void> truncate(StringView path, off_t length)
+{
+    if (!path.characters_without_null_termination())
+        return Error::from_syscall("truncate"sv, -EFAULT);
+
+    ByteString path_string = path;
+    if (::truncate(path_string.characters(), length) < 0)
+        return Error::from_syscall("truncate"sv, -errno);
+    return {};
+}
+
 ErrorOr<void> ftruncate(int fd, off_t length)
 {
     if (::ftruncate(fd, length) < 0)
@@ -812,6 +823,31 @@ ErrorOr<void> tcsetattr(int fd, int optional_actions, struct termios const& ios)
 {
     if (::tcsetattr(fd, optional_actions, &ios) < 0)
         return Error::from_syscall("tcsetattr"sv, -errno);
+    return {};
+}
+
+ErrorOr<winsize> tcgetwinsize(int fd)
+{
+    winsize ws {};
+#ifdef AK_OS_SERENITY
+    if (::tcgetwinsize(fd, &ws) < 0)
+        return Error::from_syscall("tcgetwinsize"sv, -errno);
+#else
+    if (::ioctl(fd, TIOCGWINSZ, &ws) < 0)
+        return Error::from_syscall("ioctl"sv, -errno);
+#endif
+    return ws;
+}
+
+ErrorOr<void> tcsetwinsize(int fd, winsize const& ws)
+{
+#ifdef AK_OS_SERENITY
+    if (::tcsetwinsize(fd, &ws) < 0)
+        return Error::from_syscall("tcsetwinsize"sv, -errno);
+#else
+    if (::ioctl(fd, TIOCSWINSZ, &ws) < 0)
+        return Error::from_syscall("ioctl"sv, -errno);
+#endif
     return {};
 }
 

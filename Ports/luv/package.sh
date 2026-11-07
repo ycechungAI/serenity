@@ -1,8 +1,8 @@
 #!/usr/bin/env -S bash ../.port_include.sh
 port='luv'
-version='1.53.0-0'
+version='1.53.0-1'
 files=(
-    "https://github.com/luvit/luv/releases/download/${version}/luv-${version}.tar.gz#ce6260efb974647e7687f54a54a6810bc5eb81cdc14b45b69868a5ea048f96e1"
+    "https://github.com/luvit/luv/releases/download/${version}/luv-${version}.tar.gz#569b488d5d31609ea466a6c70e008a42661ec773ea1584d3d766d46280ab7cf4"
 )
 useconfigure='true'
 

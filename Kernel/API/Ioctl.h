@@ -7,16 +7,11 @@
 
 #pragma once
 
+#include <Kernel/API/POSIX/winsize.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-struct winsize {
-    unsigned short ws_row;
-    unsigned short ws_col;
-    unsigned short ws_xpixel;
-    unsigned short ws_ypixel;
-};
 
 struct GraphicsConnectorProperties {
     unsigned char multihead_support;

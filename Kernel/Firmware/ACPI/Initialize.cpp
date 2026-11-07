@@ -8,33 +8,42 @@
 #include <Kernel/Boot/BootInfo.h>
 #include <Kernel/Boot/CommandLine.h>
 #include <Kernel/Firmware/ACPI/Parser.h>
-#include <Kernel/Firmware/ACPI/StaticParsing.h>
 #include <Kernel/Memory/TypedMapping.h>
 #include <Kernel/Sections.h>
 
+#if ARCH(X86_64)
+#    include <Kernel/Arch/x86_64/Firmware/ACPI.h>
+#endif
+
 namespace Kernel::ACPI {
 
-UNMAP_AFTER_INIT void initialize()
+static Optional<PhysicalAddress> find_rsdp()
+{
+    Optional<PhysicalAddress> rsdp;
+    if (!g_boot_info.acpi_rsdp_paddr.is_null())
+        rsdp = g_boot_info.acpi_rsdp_paddr;
+
+#if ARCH(X86_64)
+    if (!rsdp.has_value() && g_boot_info.boot_method == BootMethod::Multiboot1)
+        rsdp = StaticParsing::find_rsdp_in_ia_pc_specific_memory_locations();
+#endif
+
+    return rsdp;
+}
+
+UNMAP_AFTER_INIT ErrorOr<void> early_initialize()
 {
     auto feature_level = kernel_command_line().acpi_feature_level();
     if (feature_level == AcpiFeatureLevel::Disabled)
-        return;
+        return {};
 
-    auto rsdp = StaticParsing::find_rsdp();
+    auto rsdp = find_rsdp();
     if (!rsdp.has_value())
-        return;
+        return ENOENT;
 
-    auto facp = MUST(StaticParsing::find_table(rsdp.value(), "FACP"sv));
-    if (!facp.has_value())
-        return;
-    auto facp_table_or_error = Memory::map_typed<Structures::FADT>(facp.value());
-    if (facp_table_or_error.is_error())
-        return;
-    InterruptNumber irq_line = facp_table_or_error.value()->sci_int;
+    TRY(Parser::initialize(rsdp.value()));
 
-    Parser::must_initialize(rsdp.value(), facp.value(), irq_line);
-    if (kernel_command_line().acpi_feature_level() == AcpiFeatureLevel::Enabled)
-        Parser::the()->enable_aml_parsing();
+    return {};
 }
 
 bool is_enabled()

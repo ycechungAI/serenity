@@ -24,24 +24,46 @@ struct Session;
 // 6.1.  Opening a Session
 // https://datatracker.ietf.org/doc/html/rfc4254#section-6.1
 
-struct ExecData {
-    static ErrorOr<ExecData> create(Core::Process&& process, int fd_stdin, int fd_stdout, int fd_stderr);
+struct PtyInfo {
+    ByteString term_environment_variable {};
 
-    Core::Process child;
+    u32 width_characters {};
+    u32 height_rows {};
+    u32 width_pixels {};
+    u32 height_pixels {};
 
+    ByteBuffer terminal_modes {};
+};
+
+struct ChildManagingSystem {
     NonnullOwnPtr<Core::File> stdin_;
     NonnullOwnPtr<Core::File> stdout_;
-    NonnullOwnPtr<Core::File> stderr_;
 
+    pid_t child_pid {};
     Optional<int> exit_status {};
 
     Coroutine<ErrorOr<BehaviorControl>> handle_channel_data(Session&);
-    void handle_channel_eof(Session const&);
-
-    bool is_ready_to_be_closed() const;
+    void handle_channel_eof(Session const&) const;
 
 private:
     void close_stdin_if_required(Session const&) const;
+};
+
+struct ExecData : ChildManagingSystem {
+    static ErrorOr<ExecData> create(Core::Process&& process, int fd_stdin, int fd_stdout, int fd_stderr);
+
+    bool is_ready_to_be_closed() const;
+
+    Core::Process child;
+    NonnullOwnPtr<Core::File> stderr_;
+};
+
+struct Shell : ChildManagingSystem {
+    static ErrorOr<Shell> create(pid_t child, int fd_pty);
+
+    bool is_ready_to_be_closed() const;
+
+    bool received_io_error { false };
 };
 
 struct Session : public RefCounted<Session> {
@@ -60,7 +82,9 @@ struct Session : public RefCounted<Session> {
     StreamBuffer channel_data {};
     bool has_streaming_coroutine { false };
 
-    Variant<Empty, ExecData, SFTP::Server> system {};
+    Optional<PtyInfo> pty_info {};
+    Vector<ByteString> env {};
+    Variant<Empty, ExecData, SFTP::Server, Shell> system {};
 
     bool is_closed { false };
     bool has_received_eof { false };

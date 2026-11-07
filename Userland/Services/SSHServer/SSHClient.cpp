@@ -13,15 +13,23 @@
 #include <AK/Random.h>
 #include <AK/TemporaryChange.h>
 #include <LibCore/Account.h>
+#include <LibCore/Environment.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/Process.h>
 #include <LibCore/Socket.h>
 #include <LibCore/System.h>
 #include <LibCrypto/Curves/Ed25519.h>
 #include <LibCrypto/Curves/X25519.h>
+#include <LibFileSystem/FileSystem.h>
 #include <LibSSH/DataTypes.h>
 #include <LibSSH/IdentificationString.h>
 #include <Services/SSHServer/ServerConfiguration.h>
+
+#ifdef AK_OS_MACOS
+#    include <util.h>
+#else
+#    include <pty.h>
+#endif
 
 namespace SSH::Server {
 
@@ -450,6 +458,8 @@ ErrorOr<void> SSHClient::handle_publickey_message(
         if (!user.is_self())
             TRY(user.login());
 
+        TRY(Core::System::chdir(user.home_directory()));
+
         outln("Successful authentication for: {:s}", user.username());
 
         // FIXME: Also send a cool banner :^)
@@ -602,7 +612,7 @@ ErrorOr<void> SSHClient::handle_channel_request(GenericMessage& message)
     dbgln_if(SSH_DEBUG, "CHANNEL_REQUEST id({}): {:s}", session.local_channel_id, request_type.bytes());
 
     if (request_type == "env"sv.bytes() && !want_reply) {
-        dbgln("FIXME: Ignored channel request: {:s}", request_type.bytes());
+        TRY(handle_channel_env(session, message, want_reply));
         return {};
     }
 
@@ -613,8 +623,25 @@ ErrorOr<void> SSHClient::handle_channel_request(GenericMessage& message)
         return {};
     }
 
+    if (request_type == "shell"sv.bytes()) {
+        if (!want_reply)
+            return Error::from_string_literal("Client requested shell but doesn't want a reply");
+        TRY(handle_channel_shell(session));
+        return {};
+    }
+
     if (request_type == "subsystem"sv.bytes()) {
         TRY(handle_channel_subsystem(session, message));
+        return {};
+    }
+
+    if (request_type == "pty-req"sv.bytes()) {
+        TRY(handle_channel_pseudo_terminal(session, message));
+        return {};
+    }
+
+    if (request_type == "window-change"sv.bytes()) {
+        TRY(handle_channel_window_change(session, message));
         return {};
     }
 
@@ -683,19 +710,52 @@ Coroutine<void> SSHClient::async_stream_data_to_subsystem(NonnullRefPtr<Session>
     co_return;
 }
 
+// 6.4.  Environment Variable Passing
+// https://datatracker.ietf.org/doc/html/rfc4254#section-6.4
+ErrorOr<void> SSHClient::handle_channel_env(NonnullRefPtr<Session> const& session, GenericMessage& message, bool want_reply)
+{
+    auto variable_name = TRY(decode_string(message.payload));
+    auto variable_value = TRY(decode_string(message.payload));
+
+    session->env.append(ByteString::formatted("{:s}={:s}"sv, variable_name.bytes(), variable_value.bytes()));
+
+    if (want_reply)
+        TRY(send_channel_success_message(session));
+
+    return {};
+}
+
+static ErrorOr<Vector<ByteString>> make_env(Vector<ByteString> const& client_environment)
+{
+    Vector<ByteString> env;
+    env.extend(client_environment);
+
+    auto account = TRY(Core::Account::self(Core::Account::Read::PasswdOnly));
+
+    auto user = ByteString::formatted("USER={}", account.username());
+    env.append(user);
+
+    auto logname = ByteString::formatted("LOGNAME={}", account.username());
+    env.append(logname);
+
+    auto home = ByteString::formatted("HOME={}", account.home_directory());
+    env.append(home);
+
+    auto shell = ByteString::formatted("SHELL={}", account.shell());
+    env.append(shell);
+
+    // FIXME: DEFAULT_PATH is made for Serenity this won't work perfectly on other systems.
+    auto path = ByteString::formatted("PATH={}", DEFAULT_PATH);
+    env.append(path);
+
+    return env;
+}
+
 // 6.5.  Starting a Shell or a Command
 // https://datatracker.ietf.org/doc/html/rfc4254#section-6.5
 ErrorOr<void> SSHClient::handle_channel_exec(NonnullRefPtr<Session> const& session, GenericMessage& message)
 {
     auto command = TRY(decode_string(message.payload));
-
-    // FIXME: We should use the user's shell rather than hardcoding it.
-
-#ifdef AK_OS_SERENITY
-    auto shell = "/bin/Shell"sv;
-#else
-    auto shell = "/bin/sh"sv;
-#endif
 
     Vector<ByteString> args;
     args.append("-c");
@@ -707,9 +767,11 @@ ErrorOr<void> SSHClient::handle_channel_exec(NonnullRefPtr<Session> const& sessi
     auto stdout_fds = TRY(Core::System::pipe2(O_CLOEXEC));
     auto stderr_fds = TRY(Core::System::pipe2(O_CLOEXEC));
 
+    auto shell = TRY(Core::Account::self(Core::Account::Read::PasswdOnly)).shell();
     auto child = TRY(Core::Process::spawn({
         .executable = shell,
         .arguments = args,
+        .environment = TRY(make_env(session->env)),
         .file_actions = {
             Core::FileAction::DuplicateFile { stdin_fds[0], STDIN_FILENO },
             Core::FileAction::DuplicateFile { stdout_fds[1], STDOUT_FILENO },
@@ -726,19 +788,84 @@ ErrorOr<void> SSHClient::handle_channel_exec(NonnullRefPtr<Session> const& sessi
     TRY(send_channel_success_message(session));
 
     // FIXME: Make sure to cancel these coroutines if anything goes wrong.
-    Core::EventLoop::adopt_coroutine(async_stream_std_data(session, [](ExecData& exec_data) -> Core::File& { return *exec_data.stdout_; }, [this](auto&... args) { return send_channel_data(args...); }));
-    Core::EventLoop::adopt_coroutine(async_stream_std_data(session, [](ExecData& exec_data) -> Core::File& { return *exec_data.stderr_; }, [this](auto&... args) { return send_channel_extended_data(args...); }));
+    auto const& exec_data = session->system.get<ExecData>();
+    Core::EventLoop::adopt_coroutine(async_stream_std_data(session, *exec_data.stdout_, [this](auto&... args) { return send_channel_data(args...); }));
+    Core::EventLoop::adopt_coroutine(async_stream_std_data(session, *exec_data.stderr_, [this](auto&... args) { return send_channel_extended_data(args...); }));
 
     return {};
 }
 
-template<typename F, typename F2>
-Coroutine<void> SSHClient::async_stream_std_data(NonnullRefPtr<Session> session, F file_extractor, F2 sender)
+// 6.5.  Starting a Shell or a Command
+// https://datatracker.ietf.org/doc/html/rfc4254#section-6.5
+ErrorOr<void> SSHClient::handle_channel_shell(NonnullRefPtr<Session> const& session)
+{
+    if (!session->pty_info.has_value())
+        return Error::from_string_literal("Shell requested without a pty");
+    auto pty_info = session->pty_info.release_value();
+
+    int master {};
+    winsize size {
+        .ws_row = static_cast<u16>(pty_info.height_rows),
+        .ws_col = static_cast<u16>(pty_info.width_characters),
+        .ws_xpixel = static_cast<u16>(pty_info.width_pixels),
+        .ws_ypixel = static_cast<u16>(pty_info.height_pixels),
+    };
+
+    // FIXME: Set terminal modes from pty_info.
+
+    // I'm not happy with using fork here, but using posix_spawn would
+    // requite an external helper binary.
+    pid_t pid = forkpty(&master, nullptr, nullptr, &size);
+    if (pid < 0)
+        return Error::from_errno(errno);
+
+    if (pid == 0) {
+        auto account = TRY(Core::Account::self(Core::Account::Read::PasswdOnly));
+        auto& shell = account.shell();
+
+        Vector<StringView> args;
+        args.append(shell);
+        args.append("--login"sv);
+
+        auto env = TRY(make_env(session->env));
+        auto term = ByteString::formatted("TERM={}", pty_info.term_environment_variable);
+        env.append(term);
+
+        Vector<StringView> env_view;
+        for (auto const& var : env)
+            env_view.append(var);
+
+        TRY(Core::System::exec(shell, args, Core::System::SearchInPath::No, env_view));
+        VERIFY_NOT_REACHED();
+    }
+
+    session->system = TRY(Shell::create(pid, master));
+
+    TRY(send_channel_success_message(session));
+
+    // FIXME: Make sure to cancel this coroutine if anything goes wrong.
+    auto& shell = session->system.get<Shell>();
+    Core::EventLoop::adopt_coroutine(async_stream_std_data(session, *shell.stdout_, [this](auto&... args) { return send_channel_data(args...); }));
+
+    return {};
+}
+
+template<typename F>
+Coroutine<void> SSHClient::async_stream_std_data(NonnullRefPtr<Session> session, Core::File& file, F sender)
 {
     auto maybe_error = co_await [&]() -> Coroutine<ErrorOr<void>> {
         while (true) {
             auto output_buffer = CO_TRY(ByteBuffer::create_uninitialized(PAGE_SIZE));
-            auto output = CO_TRY(co_await file_extractor(session->system.template get<ExecData>()).async_read_some(output_buffer));
+            auto maybe_output = co_await file.async_read_some(output_buffer);
+
+            if (session->system.has<Shell>()) {
+                if (maybe_output.is_error() && maybe_output.error().code() == EIO) {
+                    // On Linux, if file is a pty, EIO is returned when we reach EOF.
+                    session->system.get<Shell>().received_io_error = true;
+                    break;
+                }
+            }
+            auto output = CO_TRY(move(maybe_output));
 
             if (output.is_empty())
                 break;
@@ -776,6 +903,65 @@ ErrorOr<void> SSHClient::handle_channel_subsystem(Session& session, GenericMessa
     }
 
     return Error::from_string_literal("Unsupported subsystem");
+}
+
+// 6.2.  Requesting a Pseudo-Terminal
+// https://datatracker.ietf.org/doc/html/rfc4254#section-6.2
+ErrorOr<void> SSHClient::handle_channel_pseudo_terminal(Session& session, GenericMessage& message)
+{
+    auto term = TRY(decode_string(message.payload));
+    u32 width_characters = TRY(message.payload.read_value<NetworkOrdered<u32>>());
+    u32 height_rows = TRY(message.payload.read_value<NetworkOrdered<u32>>());
+    u32 width_pixels = TRY(message.payload.read_value<NetworkOrdered<u32>>());
+    u32 height_pixels = TRY(message.payload.read_value<NetworkOrdered<u32>>());
+    auto terminal_modes = TRY(decode_string(message.payload));
+
+    dbgln_if(SSH_DEBUG, "Pseudo terminal requested with: TERM={}, w={}, h={}, w_px={}, h_px={}",
+        StringView { term }, width_characters, height_rows, width_pixels, height_pixels);
+
+    VERIFY(session.system.has<Empty>());
+    session.pty_info = {
+        .term_environment_variable = StringView { term },
+        .width_characters = width_characters,
+        .height_rows = height_rows,
+        .width_pixels = width_pixels,
+        .height_pixels = height_pixels,
+        .terminal_modes = move(terminal_modes),
+    };
+
+    return TRY(send_channel_success_message(session));
+}
+
+// 6.7.  Window Dimension Change Message
+// https://datatracker.ietf.org/doc/html/rfc4254#section-6.7
+ErrorOr<void> SSHClient::handle_channel_window_change(Session& session, GenericMessage& message)
+{
+    u32 width_characters = TRY(message.payload.read_value<NetworkOrdered<u32>>());
+    u32 height_rows = TRY(message.payload.read_value<NetworkOrdered<u32>>());
+    u32 width_pixels = TRY(message.payload.read_value<NetworkOrdered<u32>>());
+    u32 height_pixels = TRY(message.payload.read_value<NetworkOrdered<u32>>());
+
+    dbgln_if(SSH_DEBUG, "PTY window change: w={}, h={}, w_px={}, h_px={}",
+        width_characters, height_rows, width_pixels, height_pixels);
+
+    if (!session.system.has<Shell>())
+        return Error::from_string_literal("Requested a window change while no shell is present");
+
+    winsize ws {
+        .ws_row = static_cast<u16>(height_rows),
+        .ws_col = static_cast<u16>(width_characters),
+        .ws_xpixel = static_cast<u16>(width_pixels),
+        .ws_ypixel = static_cast<u16>(height_pixels),
+    };
+
+    auto maybe_error = Core::System::tcsetwinsize(session.system.get<Shell>().stdin_->fd(), ws);
+
+    if (maybe_error.is_error()) {
+        dbgln("Unable to set pty dimensions: {}", maybe_error.error());
+    }
+
+    // "A response SHOULD NOT be sent to this message."
+    return {};
 }
 
 ErrorOr<void> SSHClient::send_channel_success_message(Session const& session)
@@ -946,22 +1132,23 @@ ErrorOr<void> SSHClient::manage_child_death()
             return {};
 
         for (auto& session : m_sessions) {
-            if (session->system.has<ExecData>()) {
-                auto& exec_data = session->system.get<ExecData>();
-                if (exec_data.child.pid() == result.pid) {
-                    bool exited_with_code_0 = true;
+            TRY(session->system.visit([&]<DerivedFrom<ChildManagingSystem> T>(T& system) -> ErrorOr<void> {
+                if (system.child_pid == result.pid) {
                     if (WIFEXITED(result.status)) {
-                        exited_with_code_0 &= WEXITSTATUS(result.status) == 0;
-                    } else if (WIFSIGNALED(result.status)) {
-                        exited_with_code_0 = false;
+                        system.exit_status = WEXITSTATUS(result.status);
+                    }else if (WIFSIGNALED(result.status)) {
+                        system.exit_status = 128 + WTERMSIG(result.status);
                     }
-
-                    // FIXME: Send the actual exit status.
-                    exec_data.exit_status = exited_with_code_0 ? 0 : -1;
+                    else {
+                        VERIFY_NOT_REACHED();
+                    }
 
                     TRY(close_session_if_needed(*session));
                 }
-            }
+                return {}; },
+                [](auto&) -> ErrorOr<void> {
+                    return {};
+                }));
         }
     }
 }

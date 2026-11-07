@@ -84,7 +84,11 @@ private:
     ErrorOr<void> handle_channel_request(GenericMessage&);
     ErrorOr<void> handle_channel_data(GenericMessage&);
     ErrorOr<void> handle_channel_subsystem(Session&, GenericMessage&);
+    ErrorOr<void> handle_channel_pseudo_terminal(Session&, GenericMessage&);
+    ErrorOr<void> handle_channel_window_change(Session&, GenericMessage&);
+    ErrorOr<void> handle_channel_env(NonnullRefPtr<Session> const&, GenericMessage&, bool want_reply);
     ErrorOr<void> handle_channel_exec(NonnullRefPtr<Session> const&, GenericMessage&);
+    ErrorOr<void> handle_channel_shell(NonnullRefPtr<Session> const&);
     ErrorOr<void> send_channel_success_message(Session const&);
     ErrorOr<void> send_channel_data(Session const&, ReadonlyBytes);
     ErrorOr<void> send_channel_extended_data(Session const&, ReadonlyBytes);
@@ -96,8 +100,8 @@ private:
     ErrorOr<void> send_channel_close(Session&);
     ErrorOr<NonnullRefPtr<Session>> find_session(u32 sender_channel_id);
 
-    template<typename F, typename F2>
-    Coroutine<void> async_stream_std_data(NonnullRefPtr<Session>, F file_extractor, F2 sender);
+    template<typename F>
+    Coroutine<void> async_stream_std_data(NonnullRefPtr<Session>, Core::File&, F sender);
     Coroutine<void> async_stream_data_to_subsystem(NonnullRefPtr<Session>);
 
     ErrorOr<void> manage_child_death();
