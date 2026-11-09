@@ -103,12 +103,12 @@ ErrorOr<ControlList> Device::generate_initial_binner_control_list()
     return control_list;
 }
 
-ErrorOr<Device::ShaderStateRecord> Device::generate_shader_state_record(Vector<VertexData> const& vertex_array)
+ErrorOr<Device::ShaderStateRecord> Device::generate_shader_state_record(Vector<VertexData> const& vertex_array, Gfx::FloatMatrix4x4 const& model_view_projection_matrix)
 {
     ControlList control_list;
 
     // Uniforms
-    auto uniforms = TRY(generate_uniforms(m_framebuffer_size));
+    auto uniforms = TRY(generate_uniforms(m_framebuffer_size, model_view_projection_matrix));
 
     // Vertex data
     auto const vertex_data_size_in_bytes = vertex_array.size() * sizeof(vertex_array[0]);
@@ -240,6 +240,24 @@ ErrorOr<ControlList> Device::generate_tile_list(u32 target_buffer_pitch, u32 tar
 
     ControlRecord::TileCoordinatesImplicit tile_coordinates_implicit {};
     control_list.append(tile_coordinates_implicit);
+
+    if (!m_color_buffer_clear_requested_this_frame) {
+        // Load the previous target buffer contents if no color buffer clear was requested.
+        // Otherwise the buffer contents will get initialized with the specified clear color.
+        ControlRecord::LoadTileBufferGeneral load_tile_buffer_general {};
+        load_tile_buffer_general.buffer_to_load = ControlRecord::LoadTileBufferGeneral::BufferToLoad::RenderTarget0;
+        load_tile_buffer_general.memory_format = ControlRecord::MemoryFormat::Raster;
+        load_tile_buffer_general.flip_y = false;
+        load_tile_buffer_general.decimate_mode = ControlRecord::DecimateMode::Sample0;
+        load_tile_buffer_general.input_image_format = ControlRecord::OutputImageFormat::RGBA8;
+        load_tile_buffer_general.force_alpha_1 = false;
+        load_tile_buffer_general.channel_reverse = false;
+        load_tile_buffer_general.r_b_swap = true;
+        load_tile_buffer_general.height_in_ub_or_stride = target_buffer_pitch;
+        load_tile_buffer_general.height = 0;
+        load_tile_buffer_general.address = target_buffer_address;
+        control_list.append(load_tile_buffer_general);
+    }
 
     ControlRecord::EndOfLoads end_of_loads {};
     control_list.append(end_of_loads);
@@ -533,7 +551,9 @@ void Device::draw_primitives(GPU::PrimitiveType primitive_type, Vector<GPU::Vert
         }
     }
 
-    auto shader_state_record = generate_shader_state_record(vertex_array).release_value_but_fixme_should_propagate_errors();
+    auto model_view_projection_matrix = m_projection_matrix * m_model_view_matrix;
+
+    auto shader_state_record = generate_shader_state_record(vertex_array, model_view_projection_matrix).release_value_but_fixme_should_propagate_errors();
 
     auto determine_depth_test_function = [this] {
         if (!m_options.enable_depth_test)
@@ -602,6 +622,8 @@ void Device::resize(Gfx::IntSize)
 
 void Device::clear_color(FloatVector4 const& color)
 {
+    m_color_buffer_clear_requested_this_frame = true;
+
     auto clamped = color.clamped(0.0f, 1.0f);
     auto r = static_cast<u8>(clamped.x() * 255u);
     auto g = static_cast<u8>(clamped.y() * 255u);
@@ -658,6 +680,8 @@ void Device::blit_from_color_buffer(Gfx::Bitmap& target)
 
     m_binner_control_list = generate_initial_binner_control_list().release_value_but_fixme_should_propagate_errors();
     m_shader_state_records.clear();
+
+    m_color_buffer_clear_requested_this_frame = false;
 }
 
 void Device::blit_from_color_buffer(NonnullRefPtr<GPU::Image>, u32, Vector2<u32>, Vector2<i32>, Vector3<i32>)
@@ -723,14 +747,14 @@ ErrorOr<NonnullRefPtr<GPU::Shader>> Device::create_shader(GPU::IR::Shader const&
     return adopt_ref(*new Shader(this));
 }
 
-void Device::set_model_view_transform(Gfx::FloatMatrix4x4 const&)
+void Device::set_model_view_transform(Gfx::FloatMatrix4x4 const& model_view_transform)
 {
-    dbgln("V3DGPU::Device::set_model_view_transform(): unimplemented");
+    m_model_view_matrix = model_view_transform;
 }
 
-void Device::set_projection_transform(Gfx::FloatMatrix4x4 const&)
+void Device::set_projection_transform(Gfx::FloatMatrix4x4 const& projection_transform)
 {
-    dbgln("V3DGPU::Device::set_projection_transform(): unimplemented");
+    m_projection_matrix = projection_transform;
 }
 
 void Device::set_sampler_config(unsigned, GPU::SamplerConfig const&)
