@@ -552,8 +552,6 @@ elseif("${SERENITY_ARCH}" STREQUAL "aarch64")
     #       by the compiler. The CPU cannot access global variables without the MMU as the kernel is linked for a virtual address in high memory.
     set_source_files_properties(${SOURCES_RUNNING_WITHOUT_MMU} PROPERTIES COMPILE_FLAGS "-fno-stack-protector -fno-sanitize=all")
 elseif("${SERENITY_ARCH}" STREQUAL "riscv64")
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
-
     set(extensions_header "${CMAKE_CURRENT_BINARY_DIR}/Arch/riscv64/Extensions.h")
 
     add_custom_command(
@@ -643,6 +641,7 @@ set(ACPI_SOURCES
     ../Userland/Libraries/LibACPI/Interpreter.cpp
     ../Userland/Libraries/LibACPI/NameString.cpp
     ../Userland/Libraries/LibACPI/Node.cpp
+    ../Userland/Libraries/LibACPI/Nodes.cpp
     ../Userland/Libraries/LibACPI/Object.cpp
     ../Userland/Libraries/LibACPI/OpcodeFilters.cpp
     ../Userland/Libraries/LibACPI/OpcodeFrame.cpp

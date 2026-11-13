@@ -89,6 +89,24 @@ constexpr static Array<OperandType, 6> PROCESSOR_OPERANDS = {
     OperandType::End,
 };
 
+constexpr static Array<OperandType, 4> TARGET_BINARY_OPERANDS = {
+    OperandType::TermArg,
+    OperandType::TermArg,
+    OperandType::Target,
+    OperandType::End,
+};
+
+constexpr static Array<OperandType, 3> STORE_OPERANDS = {
+    OperandType::TermArg,
+    OperandType::SuperName,
+    OperandType::End,
+};
+
+constexpr static Array<OperandType, 2> RETURN_OPERANDS = {
+    OperandType::TermArg,
+    OperandType::End,
+};
+
 static ErrorOr<ReadonlySpan<OperandType>> get_opcode_operand_template(Opcode opcode)
 {
     switch (opcode) {
@@ -124,9 +142,33 @@ static ErrorOr<ReadonlySpan<OperandType>> get_opcode_operand_template(Opcode opc
     case Opcode::ProcessorOp:
         return PROCESSOR_OPERANDS.span();
 
+    case Opcode::AddOp:
+    case Opcode::SubtractOp:
+    case Opcode::MultiplyOp:
+    case Opcode::ShiftLeftOp:
+    case Opcode::ShiftRightOp:
+    case Opcode::AndOp:
+    case Opcode::NandOp:
+    case Opcode::OrOp:
+    case Opcode::NorOp:
+    case Opcode::XorOp:
+        return TARGET_BINARY_OPERANDS.span();
+
+    case Opcode::StoreOp:
+        return STORE_OPERANDS.span();
+
+    case Opcode::ReturnOp:
+        return RETURN_OPERANDS.span();
+
     case Opcode::ZeroOp:
     case Opcode::OneOp:
+    case Opcode::OnesOp:
+    case Opcode::Local0Op... Opcode::Local7Op:
+    case Opcode::Arg0Op... Opcode::Arg6Op:
         return EMPTY_OPERANDS.span();
+
+    case Opcode::NodeEvaluation:
+        VERIFY_NOT_REACHED();
 
     default:
         warnln("ACPI: get_opcode_operand_template: Unknown opcode template: {}!", opcode);
@@ -134,10 +176,13 @@ static ErrorOr<ReadonlySpan<OperandType>> get_opcode_operand_template(Opcode opc
     }
 }
 
-ErrorOr<OpcodeFrame> OpcodeFrame::from_opcode(Opcode opcode, size_t start)
+ErrorOr<OpcodeFrame> OpcodeFrame::from_opcode(Opcode opcode, size_t start, Optional<ReadonlySpan<OperandType>> operand_template)
 {
-    auto operand_template = TRY(get_opcode_operand_template(opcode));
-    return OpcodeFrame(opcode, TRY(Vector<OperandType>::from_span(operand_template)), start);
+    if (!operand_template.has_value())
+        operand_template = TRY(get_opcode_operand_template(opcode));
+
+    auto frame = OpcodeFrame(opcode, TRY(Vector<OperandType>::from_span(*operand_template)), start);
+    return frame;
 }
 
 ErrorOr<OpcodeFrame> OpcodeFrame::root_frame()
@@ -177,6 +222,10 @@ bool OpcodeFrame::filter_opcode_for_next_operand(Opcode opcode)
         return data_ref_object_filter(opcode);
     case OperandType::PackageElement:
         return package_element_filter(opcode);
+    case OperandType::SuperName:
+        return super_name_filter(opcode);
+    case OperandType::Target:
+        return target_filter(opcode);
 
     case OperandType::End:
         return term_filter(opcode);

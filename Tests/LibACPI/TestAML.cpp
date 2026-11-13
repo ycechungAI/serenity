@@ -88,3 +88,42 @@ TEST_CASE(predefined_objects)
     auto os_name_data = MUST(os_name.release_as<ACPI::AML::String>());
     EXPECT_EQ(StringView(os_name_data.buffer()), "Microsoft Windows NT"sv);
 }
+
+TEST_CASE(methods)
+{
+    auto interpreter = TRY_OR_FAIL(load_test_table("methods.aml"sv));
+
+    Vector<ACPI::AML::Object> call_arguments;
+    MUST(call_arguments.try_append(ACPI::AML::Object(u64(2))));
+    MUST(call_arguments.try_append(ACPI::AML::Object(u64(3))));
+
+    auto result = TRY_OR_FAIL(interpreter->evaluate("\\_SB_.ADD2"sv, call_arguments));
+    EXPECT_EQ(MUST(result.as<u64>()), 5ul);
+
+    result = TRY_OR_FAIL(interpreter->evaluate("\\_SB_.CALC"sv, call_arguments));
+    EXPECT_EQ(MUST(result.as<u64>()), 15ul);
+}
+
+TEST_CASE(binary_operations)
+{
+    auto interpreter = TRY_OR_FAIL(load_test_table("binary_operations.aml"sv));
+
+    auto const test_function = [&interpreter](StringView name, u64 lhs, u64 rhs, u64 expected) {
+        Vector<ACPI::AML::Object> call_arguments;
+        MUST(call_arguments.try_append(ACPI::AML::Object(u64(lhs))));
+        MUST(call_arguments.try_append(ACPI::AML::Object(u64(rhs))));
+        auto result = TRY_OR_FAIL(interpreter->evaluate(name, call_arguments));
+        EXPECT_EQ(MUST(result.as<u64>()), expected);
+    };
+
+    test_function("\\TADD"sv, 2, 3, 5);
+    test_function("\\TSUB"sv, 5, 3, 2);
+    test_function("\\TMUL"sv, 2, 3, 6);
+    test_function("\\TSHL"sv, 2, 3, 16);
+    test_function("\\TSHR"sv, 16, 3, 2);
+    test_function("\\TAND"sv, 0xF0F0, 0x0FF0, 0x00F0);
+    test_function("\\TNAN"sv, 0xF0F0, 0x0FF0, 0xFFFFFF0F);
+    test_function("\\TOR_"sv, 0xF0F0, 0x0FF0, 0xFFF0);
+    test_function("\\TNOR"sv, 0xF0F0, 0x0FF0, 0xFFFF000F);
+    test_function("\\TXOR"sv, 0xF0F0, 0x0FF0, 0xFF00);
+}

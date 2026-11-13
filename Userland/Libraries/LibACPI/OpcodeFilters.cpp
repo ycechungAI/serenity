@@ -97,7 +97,7 @@ bool statement_filter(Opcode opcode)
 bool expression_filter(Opcode opcode)
 {
     // ExpressionOpcode := DefAcquire | DefAdd | DefAnd | DefBuffer | DefConcat | DefConcatRes | DefCondRefOf | DefCopyObject | DefDecrement | DefDerefOf | DefDivide | DefFindSetLeftBit | DefFindSetRightBit | DefFromBCD | DefIncrement | DefIndex | DefLAnd | DefLEqual | DefLGreater | DefLGreaterEqual | DefLLess | DefLLessEqual | DefMid | DefLNot | DefLNotEqual | DefLoadTable | DefLOr | DefMatch | DefMod | DefMultiply | DefNAnd | DefNOr | DefNot | DefObjectType | DefOr | DefPackage | DefVarPackage | DefRefOf | DefShiftLeft | DefShiftRight | DefSizeOf | DefStore | DefSubtract | DefTimer | DefToBCD | DefToBuffer | DefToDecimalString | DefToHexString | DefToInteger | DefToString | DefWait | DefXOr | MethodInvocation
-    // FIXME: Add support for MethodInvocation.
+    // NOTE: Reading MethodInvocation will be handled a different way.
 
     switch (opcode) {
     case Opcode::AcquireOp:
@@ -246,6 +246,37 @@ bool local_obj_filter(Opcode opcode)
 {
     // LocalObj := Local0Op | Local1Op | Local2Op | Local3Op | Local4Op | Local5Op | Local6Op | Local7Op
     return opcode >= Opcode::Local0Op && opcode <= Opcode::Local7Op;
+}
+
+// https://uefi.org/specs/ACPI/6.6/20_AML_Specification.html#simplename
+bool simple_name_filter(Opcode opcode)
+{
+    // SimpleName := NameString | ArgObj | LocalObj
+    // NOTE: Reading NameString will be handled a different way.
+    return arg_obj_filter(opcode) || local_obj_filter(opcode);
+}
+
+// https://uefi.org/specs/ACPI/6.6/20_AML_Specification.html#referencetypeopcode
+bool reference_type_opcode_filter(Opcode opcode)
+{
+    // ReferenceTypeOpcode := DefRefOf | DefDerefOf | DefIndex | UserTermObj
+    // FIXME: Figure out what UserTermObj is and if we need to do anything about it
+    return opcode == Opcode::RefOfOp || opcode == Opcode::DerefOfOp || opcode == Opcode::IndexOp;
+}
+
+// https://uefi.org/specs/ACPI/6.6/20_AML_Specification.html#supername
+bool super_name_filter(Opcode opcode)
+{
+    // SuperName := SimpleName | DebugObj | ReferenceTypeOpcode
+    return simple_name_filter(opcode) || opcode == Opcode::DebugOp || reference_type_opcode_filter(opcode);
+}
+
+// https://uefi.org/specs/ACPI/6.6/20_AML_Specification.html#target
+bool target_filter(Opcode opcode)
+{
+    // Target := SuperName | NullName
+    // NOTE: Reading NullName will be handled a different way.
+    return super_name_filter(opcode);
 }
 
 // https://uefi.org/specs/ACPI/6.6/20_AML_Specification.html#leadnamechar

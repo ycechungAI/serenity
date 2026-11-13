@@ -7,6 +7,7 @@
 
 #include <AK/Assertions.h>
 #include <AK/Debug.h>
+#include <AK/NumericLimits.h>
 #include <LibACPI/Definitions.h>
 #include <LibACPI/Interpreter.h>
 #include <LibACPI/Node.h>
@@ -192,6 +193,8 @@ ErrorOr<Object> Interpreter::finalize_value_opcode(OpcodeFrame& frame)
         return Object(u64(0));
     case Opcode::OneOp:
         return Object(u64(1));
+    case Opcode::OnesOp:
+        return Object(m_scope_frames.last().number_mask());
 
     case Opcode::BytePrefix:
     case Opcode::WordPrefix:
@@ -209,8 +212,76 @@ ErrorOr<Object> Interpreter::finalize_value_opcode(OpcodeFrame& frame)
         return Package(move(operands));
     }
 
+    case Opcode::AddOp:
+    case Opcode::SubtractOp:
+    case Opcode::MultiplyOp:
+    case Opcode::ShiftLeftOp:
+    case Opcode::ShiftRightOp:
+    case Opcode::AndOp:
+    case Opcode::NandOp:
+    case Opcode::OrOp:
+    case Opcode::NorOp:
+    case Opcode::XorOp: {
+        auto const calculate = [](Opcode opcode, u64 left, u64 right) -> u64 {
+            switch (opcode) {
+            case Opcode::AddOp:
+                return left + right;
+            case Opcode::SubtractOp:
+                return left - right;
+            case Opcode::MultiplyOp:
+                return left * right;
+            case Opcode::ShiftLeftOp:
+                return left << right;
+            case Opcode::ShiftRightOp:
+                return left >> right;
+            case Opcode::AndOp:
+                return left & right;
+            case Opcode::NandOp:
+                return ~(left & right);
+            case Opcode::OrOp:
+                return left | right;
+            case Opcode::NorOp:
+                return ~(left | right);
+            case Opcode::XorOp:
+                return left ^ right;
+            default:
+                VERIFY_NOT_REACHED();
+            }
+        };
+
+        auto left = TRY(TRY(resolve_references(frame.operand(0)))->as<u64>());
+        auto right = TRY(TRY(resolve_references(frame.operand(1)))->as<u64>());
+        auto& target = frame.operand(2);
+
+        auto result = Object(calculate(frame.opcode(), left, right) & m_scope_frames.last().number_mask());
+
+        TRY(store(target, TRY(result.clone())));
+        return result;
+    }
+
+    case Opcode::Local0Op... Opcode::Local7Op:
+        return LocalReference(to_underlying(frame.opcode()) - to_underlying(Opcode::Local0Op));
+    case Opcode::Arg0Op... Opcode::Arg6Op:
+        return ArgumentReference(to_underlying(frame.opcode()) - to_underlying(Opcode::Arg0Op));
+
+    case Opcode::StoreOp: {
+        auto value = move(frame.operand(0));
+        TRY(store(frame.operand(1), TRY(value.clone())));
+        return value;
+    }
+
+    case Opcode::NodeEvaluation: {
+        auto name = TRY(frame.operand(0).release_as<NameString>());
+        auto node = TRY(find_node(name, m_scope_frames.last().scope()));
+
+        auto arguments = frame.release_operands();
+        arguments.remove(0, 1);
+
+        return evaluate(node, move(arguments));
+    }
+
     default:
-        INTERPRETER_ERROR("Unimplemented!", EINVAL, "Unimplemented value opcode {}!", frame.opcode());
+        INTERPRETER_ERROR("Unimplemented!", EINVAL, "Unimplemented opcode {}!", frame.opcode());
     }
 
     VERIFY_NOT_REACHED();
@@ -224,8 +295,8 @@ ErrorOr<void> Interpreter::finalize_term_opcode(OpcodeFrame& frame, TableStream&
         auto path = TRY(frame.operand(1).release_as<NameString>());
         auto scope = TRY(find_node(path, m_scope_frames.last().scope()));
 
-        auto scope_frame = ScopeFrame(m_namespace_root, scope, frame.start(), frame.start() + length, m_loaded_tables.size() - 1);
-        TRY(m_scope_frames.try_append(scope_frame));
+        auto scope_frame = ScopeFrame(m_namespace_root, scope, frame.start(), frame.start() + length, m_loaded_tables.size() - 1, m_scope_frames.last().number_mask());
+        TRY(m_scope_frames.try_append(move(scope_frame)));
         return {};
     }
 
@@ -243,7 +314,7 @@ ErrorOr<void> Interpreter::finalize_term_opcode(OpcodeFrame& frame, TableStream&
         auto path = TRY(frame.operand(1).release_as<NameString>());
         auto flags = TRY(frame.operand(2).release_as<u64>());
 
-        auto node = TRY(try_make_ref_counted<MethodNode>(frame.start(), frame.start() + length, m_loaded_tables.size() - 1, flags));
+        auto node = TRY(try_make_ref_counted<MethodNode>(stream.offset(), frame.start() + length, m_loaded_tables.size() - 1, bit_cast<MethodFlags>(static_cast<u8>(flags)), m_scope_frames.last().number_mask()));
         TRY(m_scope_frames.last().insert_node(path, node));
 
         TRY(stream.seek(frame.start() + length));
@@ -282,8 +353,8 @@ ErrorOr<void> Interpreter::finalize_term_opcode(OpcodeFrame& frame, TableStream&
         auto node = TRY(try_make_ref_counted<DeviceNode>());
         TRY(m_scope_frames.last().insert_node(path, node));
 
-        auto scope_frame = ScopeFrame(m_namespace_root, node, frame.start(), frame.start() + length, m_loaded_tables.size() - 1);
-        TRY(m_scope_frames.try_append(scope_frame));
+        auto scope_frame = ScopeFrame(m_namespace_root, node, frame.start(), frame.start() + length, m_loaded_tables.size() - 1, m_scope_frames.last().number_mask());
+        TRY(m_scope_frames.try_append(move(scope_frame)));
         return {};
     }
 
@@ -297,13 +368,19 @@ ErrorOr<void> Interpreter::finalize_term_opcode(OpcodeFrame& frame, TableStream&
         auto node = TRY(try_make_ref_counted<ProcessorNode>(id, processor_register_block_address, processor_register_block_length));
         TRY(m_scope_frames.last().insert_node(path, node));
 
-        auto scope_frame = ScopeFrame(m_namespace_root, node, frame.start(), frame.start() + length, m_loaded_tables.size() - 1);
-        TRY(m_scope_frames.try_append(scope_frame));
+        auto scope_frame = ScopeFrame(m_namespace_root, node, frame.start(), frame.start() + length, m_loaded_tables.size() - 1, m_scope_frames.last().number_mask());
+        TRY(m_scope_frames.try_append(move(scope_frame)));
         return {};
     }
 
+    case Opcode::ReturnOp:
+        // FIXME: We shouldn't resolve the references here
+        m_scope_frames.last().return_value() = move(*TRY(resolve_references(frame.operand(0))));
+        return {};
+
     default:
-        INTERPRETER_ERROR("Unimplemented!", EINVAL, "Unimplemented term opcode {}!", frame.opcode());
+        TRY(finalize_value_opcode(frame));
+        return {};
     }
 
     VERIFY_NOT_REACHED();
@@ -347,7 +424,7 @@ ErrorOr<IterationDecision> Interpreter::read_operand(TableStream& stream, Operan
     case OperandType::QWordData: {
         auto value = TRY(stream.read_value<u64>());
         DEBUG_LOG("Reading qword... ({})", value);
-        TRY(top_opcode_frame.finish_operand(static_cast<u64>(value), stream.offset()));
+        TRY(top_opcode_frame.finish_operand(static_cast<u64>(value) & m_scope_frames.last().number_mask(), stream.offset()));
         return IterationDecision::Continue;
     }
     case OperandType::String: {
@@ -438,6 +515,22 @@ ErrorOr<IterationDecision> Interpreter::read_operand(TableStream& stream, Operan
         m_state = State::ReadingOpcode;
         return IterationDecision::Continue;
 
+    case OperandType::SuperName:
+    case OperandType::Target:
+        DEBUG_LOG("Reading target...");
+
+        if (is_namestring_start(TRY(stream.peek_byte())))
+            INTERPRETER_ERROR("Unsupported target!", ENOTSUP, "Reading name strings as targets is not yet supported!");
+
+        if (operand == OperandType::Target && TRY(stream.peek_byte()) == 0x00) {
+            TRY(stream.read_value<u8>());
+            TRY(top_opcode_frame.finish_operand(Object(), stream.offset()));
+            return IterationDecision::Continue;
+        }
+
+        m_state = State::ReadingOpcode;
+        return IterationDecision::Continue;
+
     default:
         DEBUG_LOG("Failure!");
         INTERPRETER_ERROR("Unimplemented operand type!", EINVAL, "Operand type {} unimplemented!", to_underlying(operand));
@@ -473,8 +566,25 @@ ErrorOr<IterationDecision> Interpreter::cycle(TableStream& stream)
             auto name = TRY(stream.read_name_string());
             DEBUG_LOG("{}", name.to_string());
 
-            warnln("ACPI: Reading name string as value is not yet supported");
-            return Error::from_errno(ENOTSUP);
+            auto node = TRY(find_node(name, m_scope_frames.last().scope()));
+            size_t argument_count = node->type() == NodeType::Method ? static_ptr_cast<MethodNode>(node)->argument_count() : 0;
+
+            if (node->type() == NodeType::Method)
+                INTERPRETER_ERROR("Unsupported method!", ENOTSUP, "Calling methods is not yet supported!");
+
+            Vector<OperandType> operand_template;
+            TRY(operand_template.try_ensure_capacity(argument_count + 2));
+            TRY(operand_template.try_append(OperandType::NameString));
+            for (size_t i = 0; i < argument_count; ++i)
+                TRY(operand_template.try_append(OperandType::TermArg));
+            TRY(operand_template.try_append(OperandType::End));
+
+            auto opcode_frame = TRY(OpcodeFrame::from_opcode(Opcode::NodeEvaluation, stream.offset(), operand_template));
+            TRY(opcode_frame.finish_operand(Object(move(name)), 0));
+
+            TRY(m_opcode_frames.try_append(move(opcode_frame)));
+            m_state = State::ReadingOperand;
+            return IterationDecision::Continue;
         }
 
         auto opcode = TRY(stream.read_opcode());
@@ -524,6 +634,9 @@ ErrorOr<IterationDecision> Interpreter::cycle(TableStream& stream)
             m_state = State::ReadingOpcode;
         }
 
+        if (!m_scope_frames.last().return_value().is_empty())
+            return IterationDecision::Break;
+
         return IterationDecision::Continue;
     }
     }
@@ -531,19 +644,22 @@ ErrorOr<IterationDecision> Interpreter::cycle(TableStream& stream)
     VERIFY_NOT_REACHED();
 }
 
-ErrorOr<Object> Interpreter::evaluate(StringView path)
+ErrorOr<Object> Interpreter::evaluate(StringView path, ReadonlySpan<Object> arguments)
 {
-    return evaluate(TRY(NameString::from_string_view(path)));
+    return evaluate(TRY(NameString::from_string_view(path)), arguments);
 }
 
-ErrorOr<Object> Interpreter::evaluate(NameString const& path)
+ErrorOr<Object> Interpreter::evaluate(NameString const& path, ReadonlySpan<Object> arguments)
 {
     auto node = TRY(find_node(path, m_namespace_root));
-    return evaluate(node);
+    return evaluate(node, arguments);
 }
 
-ErrorOr<Object> Interpreter::evaluate(NonnullRefPtr<Node> node)
+ErrorOr<Object> Interpreter::evaluate(NonnullRefPtr<Node> node, ReadonlySpan<Object> arguments)
 {
+    if (node->type() != NodeType::Method && !arguments.is_empty())
+        INTERPRETER_ERROR("Cannot pass arguments to non-method node!", EINVAL, "Node type {} does not accept arguments!", node->kind());
+
     switch (node->type()) {
     case NodeType::Name: {
         auto name_node = static_ptr_cast<NameNode>(node);
@@ -553,11 +669,114 @@ ErrorOr<Object> Interpreter::evaluate(NonnullRefPtr<Node> node)
     case NodeType::Field:
         INTERPRETER_ERROR("Field evaluation not supported!", EINVAL, "Evaluating fields is not supported yet!");
 
+    case NodeType::Method:
+        return call_method(static_ptr_cast<MethodNode>(node), arguments);
+
     default:
         INTERPRETER_ERROR("Cannot evaluate node type!", EINVAL, "Node type {} not supported for evaluation!", node->kind());
     }
 
     VERIFY_NOT_REACHED();
+}
+
+ErrorOr<Object> Interpreter::call_method(NonnullRefPtr<MethodNode> node, ReadonlySpan<Object> arguments)
+{
+    dbgln_if(AML_DEBUG, "ACPI: Calling method {}", node->name().to_string_view());
+
+    if (node->table_index() == PREDEFINED_METHOD_TABLE_INDEX)
+        INTERPRETER_ERROR("Running predefined methods is not implemented", ENOTSUP, "Running predefined methods is not implemented");
+
+    if (arguments.size() != node->argument_count())
+        INTERPRETER_ERROR("Argument count mismatch!", EINVAL, "Expected {} arguments, got {}", node->argument_count(), arguments.size());
+
+    auto parent_scope = node->parent().strong_ref();
+    if (!parent_scope)
+        INTERPRETER_ERROR("Method has no parent!", EINVAL, "Method node at {} has no parent!", node->start());
+
+    auto root_scope_frame = ScopeFrame(m_namespace_root, parent_scope.release_nonnull(), node->start(), node->end(), node->table_index(), node->number_mask());
+    for (size_t i = 0; i < arguments.size(); ++i)
+        root_scope_frame.argument(i) = TRY(arguments[i].clone());
+    TRY(m_scope_frames.try_append(move(root_scope_frame)));
+
+    auto root_opcode_frame = TRY(OpcodeFrame::root_frame());
+    TRY(m_opcode_frames.try_append(move(root_opcode_frame)));
+
+    auto& buffer = m_loaded_tables[node->table_index()];
+    TableStream stream(buffer);
+
+    TRY(stream.seek(node->start()));
+
+    auto return_value = Object();
+
+    while (m_opcode_frames.size() > 0 && m_scope_frames.size() > 0) {
+        if (TRY(cycle(stream)) == IterationDecision::Break)
+            break;
+    }
+
+    if (!m_scope_frames.is_empty() && !m_scope_frames.last().return_value().is_empty()) {
+        return_value = move(m_scope_frames.last().return_value());
+        m_scope_frames.take_last();
+    }
+
+    if (m_scope_frames.size() != 0 || m_opcode_frames.size() != 1)
+        INTERPRETER_ERROR("Unbalanced scope or opcode frames!", EINVAL, "Unbalanced scope or opcode frames!");
+
+    m_opcode_frames.take_last();
+    return return_value;
+}
+
+ErrorOr<Object*> Interpreter::resolve_reference(Object& reference)
+{
+    auto& top_scope_frame = m_scope_frames.last();
+
+    if (reference.is<ArgumentReference>()) {
+        auto argument_index = MUST(reference.as<ArgumentReference>()).index();
+        return &top_scope_frame.argument(argument_index);
+    }
+
+    if (reference.is<LocalReference>()) {
+        auto local_index = MUST(reference.as<LocalReference>()).index();
+        return &top_scope_frame.local(local_index);
+    }
+
+    if (reference.is<NodeReference>())
+        INTERPRETER_ERROR("Resolving node references is not supported!", EINVAL, "Resolving node references is not supported yet!");
+
+    return &reference;
+}
+
+ErrorOr<Object*> Interpreter::resolve_references(Object& reference)
+{
+    auto* object = &reference;
+    while (object->is_reference())
+        object = TRY(resolve_reference(*object));
+    return object;
+}
+
+ErrorOr<void> Interpreter::store(Object const& target, Object value)
+{
+    // FIXME: Handle multilevel references for the target object.
+    // FIXME: Handle buffer size immutability.
+
+    if (target.is_empty())
+        return {};
+
+    if (target.is<ArgumentReference>()) {
+        auto argument_index = MUST(target.as<ArgumentReference>()).index();
+        m_scope_frames.last().argument(argument_index) = move(value);
+        return {};
+    }
+
+    if (target.is<LocalReference>()) {
+        auto local_index = MUST(target.as<LocalReference>()).index();
+        m_scope_frames.last().local(local_index) = move(value);
+        return {};
+    }
+
+    if (target.is<NodeReference>())
+        INTERPRETER_ERROR("Setting node values is not supported!", EINVAL, "Setting node values is not supported yet!");
+
+    INTERPRETER_ERROR("Unsupported target type!", EINVAL, "Unsupported target type!");
 }
 
 ErrorOr<NonnullRefPtr<Node>> Interpreter::create_root_namespace()
@@ -574,7 +793,10 @@ ErrorOr<NonnullRefPtr<Node>> Interpreter::create_root_namespace()
     // https://uefi.org/specs/ACPI/6.6/05_ACPI_Software_Programming_Model.html#predefined-objects
     TRY(namespace_root->insert_child("_GL_"sv, TRY(try_make_ref_counted<MutexNode>(0))));
     TRY(namespace_root->insert_child("_REV"sv, TRY(try_make_ref_counted<NameNode>(Object(u64(2))))));
-    TRY(namespace_root->insert_child("_OSI"sv, TRY(try_make_ref_counted<MethodNode>(0, 0, PREDEFINED_METHOD_TABLE_INDEX, 1))));
+
+    MethodFlags flags {};
+    flags.argument_count = 1;
+    TRY(namespace_root->insert_child("_OSI"sv, TRY(try_make_ref_counted<MethodNode>(0, 0, PREDEFINED_METHOD_TABLE_INDEX, flags, NumericLimits<u64>::max()))));
 
     // NOTE: We need to pretend to be Windows to ensure compatibility with a wide range of BIOSes.
     //       See https://docs.kernel.org/firmware-guide/acpi/osi.html.
@@ -589,8 +811,10 @@ ErrorOr<NonnullRefPtr<Node>> Interpreter::create_root_namespace()
 
 ErrorOr<void> Interpreter::load(ReadonlyBytes bytes)
 {
-    TRY(m_loaded_tables.try_append(TableStream(bytes)));
-    auto& stream = m_loaded_tables.last();
+    TRY(m_loaded_tables.try_append(TRY(ByteBuffer::copy(bytes))));
+
+    auto& buffer = m_loaded_tables.last();
+    TableStream stream(buffer);
 
     if (!validate_table(*reinterpret_cast<Structures::SDTHeader const*>(bytes.data())))
         INTERPRETER_ERROR("Incorrect checksum!", EINVAL, "Table checksum incorrect!");
@@ -598,7 +822,10 @@ ErrorOr<void> Interpreter::load(ReadonlyBytes bytes)
     auto block_header = TRY(stream.read_sdt_header());
     outln("ACPI: Interpreter::load[{}]: Loading table '{}' by OEM '{}'", m_loaded_tables.size() - 1, StringView(block_header.oem_table_id, 8), StringView(block_header.oem_id, 6));
 
-    auto root_scope_frame = ScopeFrame(m_namespace_root, m_namespace_root, stream.offset(), TRY(stream.size()), m_loaded_tables.size() - 1);
+    u64 number_mask = block_header.revision < 2 ? NumericLimits<u32>::max() : NumericLimits<u64>::max();
+    dbgln_if(AML_DEBUG, "ACPI: Interpreter::load: Number mask: {:x}", number_mask);
+
+    auto root_scope_frame = ScopeFrame(m_namespace_root, m_namespace_root, stream.offset(), TRY(stream.size()), m_loaded_tables.size() - 1, number_mask);
     TRY(m_scope_frames.try_append(move(root_scope_frame)));
 
     auto root_opcode_frame = TRY(OpcodeFrame::root_frame());
